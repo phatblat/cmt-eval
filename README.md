@@ -5,7 +5,7 @@ matrix of **models × thinking levels × fixtures × repetitions**. It runs the
 agent, grades what it actually did to the filesystem/git state (not what it
 claims), and reports wall clock, tokens, and dollar cost.
 
-The first subject under test is the user's local `/git:commit` skill
+The first subject under test is the `/git:commit` skill
 (`~/.claude/commands/git/commit.md`) driven by
 [`omp`](https://github.com/can1357/oh-my-pi) (oh-my-pi): each run
 materializes a git repo whose dirty working tree holds several logically
@@ -13,14 +13,20 @@ distinct concerns, invokes `omp -p "/git:commit"` against it, then grades
 commit count, file grouping, message convention, the required attribution
 trailer, and tree cleanliness.
 
+> **Note:** `evalkit/` is subject-agnostic but currently lives in this repo
+> next to the `git-commit` subject it evaluates, and may be split into a
+> standalone package later. The only place the framework names a concrete
+> subject is the `TASKS` registry in `evalkit/task.ts`.
+
 ## Quickstart
 
 ```sh
-mise install
+mise install     # bun, just, and omp at the versions pinned in mise.toml
 just deps        # bun install
-just fixtures    # mine the git-commit fixtures from ~ (dotfiles)
+just fixtures    # mine the git-commit fixtures from a dotfiles checkout
 just verify-fixtures
 just scan        # secret-scan the built fixtures
+just check       # tsc --noEmit
 just test        # grader-discrimination + unit tests, no tokens spent
 just smoke       # 2 real omp runs against the cheapest model (~$0.10, <3 min)
 just report      # render results.csv / report.md / report.html / charts/*.svg
@@ -33,6 +39,10 @@ just estimate SUITE=focus   # projected run count + dollar cost before spending 
 just eval SUITE=focus       # 7 models x 2 thinking levels x 4 fixtures x 3 reps = 168 runs
 just report                 # renders runs/latest/{report.md,report.html,results.csv,charts/}
 ```
+
+`just eval` also takes `JOBS=N` to cap how many providers run concurrently.
+To debug a single cell, `bun run evalkit/cli.ts eval --suite smoke --keep-repos`
+leaves each scratch repo on disk instead of deleting it.
 
 ## Suites
 
@@ -50,12 +60,14 @@ Cells run **rep-major** (every rep sweeps the whole matrix, so a transient
 provider slowdown biases at most one rep) and are scheduled **serially
 within a provider, in parallel across providers** — Anthropic and Codex OAuth
 pools throttle under concurrency, which would corrupt the wall-clock metric.
-Each result row records `jobs`, `perProviderJobs`, and `contended`.
+`meta.json` records `jobs` and `perProviderJobs` for the run; each result row
+records `contended`.
 
 ## Fixtures
 
 Each `git-commit` fixture (`tasks/git-commit/fixtures/<id>/`) is mined from
-real commit history in a source repo (default `~`), never invented:
+real commit history in
+[`phatblat/dotfiles`](https://github.com/phatblat/dotfiles), never invented:
 
 | fixture | expected commits | what it's testing |
 | --- | --- | --- |
@@ -76,7 +88,8 @@ Each fixture directory holds:
   provenance (repo/base/commit SHAs), and the expected `[[group]]` table
   (type, subject, paths) used for grading.
 
-Every fixture is regenerated with `just fixtures`, round-trip verified with
+Every fixture is regenerated with `just fixtures SOURCE=<dotfiles-checkout>`,
+round-trip verified with
 `just verify-fixtures` (asserts `git am`/`git apply` succeed, the dirty path
 set matches the manifest exactly, the index is clean, and the tree is
 dirty), and secret-scanned with `just scan` before being trusted. The
@@ -109,9 +122,14 @@ weights configured per suite, forced to `0` for any run that didn't exit `0`.
 
 ## Reports
 
-`just report` writes, per run directory (`runs/<runId>/`):
+`just report` writes, per run directory (`runs/<runId>/`), with `runs/latest`
+symlinked to the most recent run:
 
+- `meta.json` — suite config, `bun`/`omp` versions, platform, and timestamps.
 - `results.jsonl` / `results.csv` — one row per cell.
+- `logs/<cellId>/` — `stdout.log`, `stderr.log`, the `eval.yml` handed to
+  `omp`, its `sessions/` transcripts, plus `git-log.txt` and `git-status.txt`
+  captured after grading.
 - `report.md` / `report.html` — leaderboard, per-fixture table, failures,
   and six SVG charts (composite by model, commit-count accuracy, cost vs.
   score, wall time, a fixture heatmap, and mean tokens by model). Charts are
@@ -123,6 +141,25 @@ weights configured per suite, forced to `0` for any run that didn't exit `0`.
 (subscription / local box), so their dollar figures are legitimately `0`;
 timings are measured with providers serialized (`wallS` includes ~1-2s of
 `omp` startup, `modelTimeS` does not).
+
+## Repo layout
+
+```
+evalkit/            subject-agnostic framework
+  cli.ts            command dispatch
+  suite.ts          suite TOML load + one-pass validation
+  runner.ts         matrix expansion, per-provider scheduling, result rows
+  models.ts         model catalog + pricing, via `omp models --json`
+  gitrepo.ts        git helpers, scratch-repo materialization
+  omp.ts            agent invocation, token and cost accounting
+  secrets.ts        secret-pattern scanner for fixture patches
+  report/           SVG charts, aggregation, md/html/csv rendering
+tasks/git-commit/   the subject under test: prompt, grading, fixture mining
+suites/             matrix definitions
+test/               bun tests — no tokens, no network
+runs/               generated output (gitignored)
+examples/           published run summaries (`just publish-example`)
+```
 
 ## Adding a new subject under test
 

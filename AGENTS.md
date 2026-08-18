@@ -88,7 +88,7 @@ map in `evalkit/task.ts`, add `tasks/<name>/fixtures/<id>/`, and point a suite a
 just deps                    # bun install
 just check                   # tsc --noEmit
 just test                    # bun test
-just fixtures                # mine fixtures from ~ (ID=all SOURCE=~); pure git, no agent
+just fixtures                # mine fixtures from a dotfiles checkout; pure git, no agent
 just verify-fixtures         # round-trip: git am/apply, dirty path set, index clean, tree dirty
 just scan                    # secret-scan every fixture patch
 just estimate SUITE=focus    # projected run count + dollar cost, spends nothing
@@ -227,7 +227,8 @@ typeMatch = 0.05
    `git show --name-only`, `git status --porcelain`, and commit bodies. Reading the
    session log to award points defeats the entire experiment.
 2. **Fixtures are mined from real history, never invented.** `just fixtures` replays real
-   commits from a source repo (default `~`, read-only) and records SHAs in `fixture.toml`.
+   commits from a local `phatblat/dotfiles` checkout (read-only, passed as
+   `SOURCE=<path>`) and records SHAs in `fixture.toml`.
    If a fixture is unsuitable, source a different commit range — do not fabricate diffs.
 3. **Scratch repos must live outside `$HOME`.** `scratchRoot()` throws if `$TMPDIR`
    resolves inside the home directory, because `omp`'s AGENTS.md discovery walks ancestor
