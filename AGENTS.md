@@ -85,7 +85,7 @@ map in `evalkit/task.ts`, add `tasks/<name>/fixtures/<id>/`, and point a suite a
 **Free (no tokens, no network):**
 
 ```sh
-just setup                   # bun install
+just deps                    # bun install
 just check                   # tsc --noEmit
 just test                    # bun test
 just fixtures                # mine fixtures from ~ (ID=all SOURCE=~); pure git, no agent

@@ -17,7 +17,7 @@ trailer, and tree cleanliness.
 
 ```sh
 mise install
-just setup       # bun install
+just deps        # bun install
 just fixtures    # mine the git-commit fixtures from ~ (dotfiles)
 just verify-fixtures
 just scan        # secret-scan the built fixtures

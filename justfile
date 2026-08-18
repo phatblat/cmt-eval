@@ -2,7 +2,7 @@
     just --list
 
 # Install dependencies.
-setup:
+deps:
     bun install
 
 # Type-check the whole project (tsc --noEmit).
