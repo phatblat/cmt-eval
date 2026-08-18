@@ -1,3 +1,4 @@
-runs/
-node_modules/
 *.tsbuildinfo
+.DS_Store
+node_modules/
+runs/
