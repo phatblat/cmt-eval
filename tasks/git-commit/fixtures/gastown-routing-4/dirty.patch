@@ -1,0 +1,420 @@
+diff --git a/.claude/policy-limits.json b/.claude/policy-limits.json
+new file mode 100644
+index 00000..06aaf
+--- /dev/null
++++ b/.claude/policy-limits.json
+@@ -0,0 +1,7 @@
++{
++  "restrictions": {
++    "allow_remote_control": {
++      "allowed": false
++    }
++  }
++}
+\ No newline at end of file
+diff --git a/.codexbar/config.json b/.codexbar/config.json
+index 0d590..6fdc4 100644
+--- a/.codexbar/config.json
++++ b/.codexbar/config.json
+@@ -8,6 +8,10 @@
+       "enabled" : true,
+       "id" : "claude"
+     },
++    {
++      "enabled" : true,
++      "id" : "gemini"
++    },
+     {
+       "enabled" : false,
+       "id" : "cursor"
+@@ -20,10 +24,6 @@
+       "enabled" : false,
+       "id" : "factory"
+     },
+-    {
+-      "enabled" : true,
+-      "id" : "gemini"
+-    },
+     {
+       "enabled" : false,
+       "id" : "antigravity"
+diff --git a/.config/tmux/tmux.conf b/.config/tmux/tmux.conf
+index 6bca5..c80e 100644
+--- a/.config/tmux/tmux.conf
++++ b/.config/tmux/tmux.conf
+@@ -5,3 +5,14 @@ set-option -g history-limit 50000
+ 
+ # Mouse support (scroll with trackpad/wheel; hold Option to bypass for text selection)
+ set-option -g mouse on
++
++# Use vi-style copy mode keys and make wheel-up always enter tmux scrollback.
++# The tmux default sends wheel events to alternate-screen apps, which prevents
++# pane history scrollback in many interactive tools.
++set-option -g mode-keys vi
++bind-key -n WheelUpPane if-shell -F "#{pane_in_mode}" \
++  "send-keys -X -N 3 scroll-up" \
++  "copy-mode -e \\; send-keys -X -N 3 scroll-up"
++bind-key -n WheelDownPane if-shell -F "#{pane_in_mode}" \
++  "send-keys -X -N 3 scroll-down" \
++  "send-keys -M"
+diff --git a/docs/gastown-agent-routing.md b/docs/gastown-agent-routing.md
+new file mode 100644
+index 00000..e30be
+--- /dev/null
++++ b/docs/gastown-agent-routing.md
+@@ -0,0 +1,71 @@
++# Gastown Agent Routing Policy
++
++This runbook documents the default routing policy to reduce Codex/Claude usage
++by shifting low-risk work to Gemini.
++
++## Live Rig Policy
++
++Low-risk rigs use Gemini for `witness` and `refinery`:
++
++- `forge`
++- `l8r`
++- `mintlify_docs`
++- `dql_browser`
++
++Apply or re-apply:
++
++```bash
++just gt-agent-policy-apply
++```
++
++Show current policy:
++
++```bash
++just gt-agent-policy-show
++```
++
++## Smart Sling Command
++
++Use `gt-sling-smart` for new work dispatches instead of raw `gt sling`.
++
++Wrapper behavior:
++
++- If `--agent` is passed, it is respected.
++- If risk is `low`, routes to `gemini`.
++- If risk is `high`, routes to `codex`.
++- If no explicit risk:
++  - high-risk keywords route to `codex`
++  - low-risk keywords route to `gemini`
++  - low-risk rig targets route to `gemini`
++  - otherwise route to `codex`
++
++Keywords are tuned for current usage management and can be updated in:
++
++- `~/scripts/gt-sling-smart`
++
++## Commands
++
++Dispatch with automatic routing:
++
++```bash
++just gt-sling-smart dx-123 ditto_devx --merge=local
++```
++
++Force low-risk routing:
++
++```bash
++just gt-sling-smart dx-123 ditto_devx --risk low --merge=local
++```
++
++Preview routing decision:
++
++```bash
++just gt-sling-smart-dry-run dx-123 ditto_devx --merge=local
++```
++
++## Notes
++
++- Current defaults:
++  - `GT_SAFE_AGENT=gemini`
++  - `GT_RISKY_AGENT=codex`
++- You can override with env vars per shell/session.
+diff --git a/justfile b/justfile
+index 4d2c..f615c 100644
+--- a/justfile
++++ b/justfile
+@@ -386,6 +386,26 @@ gt-mise-bump-polecat tool current bump rig='dotfiles':
+         --bump {{ bump }} \
+         --rig {{ rig }}
+ 
++# Apply low-risk rig role-agent policy (witness/refinery -> gemini)
++[group('gastown')]
++gt-agent-policy-apply:
++    ~/scripts/gt-agent-policy-apply apply
++
++# Show current low-risk rig role-agent policy
++[group('gastown')]
++gt-agent-policy-show:
++    ~/scripts/gt-agent-policy-apply show
++
++# Smart sling wrapper: auto-route low-risk work to gemini, high-risk to codex
++[group('gastown')]
++gt-sling-smart bead target *args:
++    ~/scripts/gt-sling-smart {{ bead }} {{ target }} {{ args }}
++
++# Preview smart sling routing decision without dispatching
++[group('gastown')]
++gt-sling-smart-dry-run bead target *args:
++    ~/scripts/gt-sling-smart {{ bead }} {{ target }} {{ args }} --dry-run
++
+ #
+ # lm-studio group recipes
+ #
+diff --git a/scripts/gt-agent-policy-apply b/scripts/gt-agent-policy-apply
+new file mode 100755
+index 00000..8fc30
+--- /dev/null
++++ b/scripts/gt-agent-policy-apply
+@@ -0,0 +1,43 @@
++#!/usr/bin/env bash
++set -euo pipefail
++
++WORKSPACE="${GT_WORKSPACE:-$HOME/gt}"
++SAFE_AGENT="${GT_SAFE_AGENT:-gemini}"
++LOW_RISK_RIGS="${GT_LOW_RISK_RIGS:-forge,l8r,mintlify_docs,dql_browser}"
++MODE="${1:-apply}"
++
++usage() {
++  cat <<'EOF'
++Usage:
++  gt-agent-policy-apply [apply|show]
++
++Environment variables:
++  GT_WORKSPACE      Gas Town workspace path (default: ~/gt)
++  GT_SAFE_AGENT     Safe/low-risk agent (default: gemini)
++  GT_LOW_RISK_RIGS  CSV list of low-risk rigs
++                    (default: forge,l8r,mintlify_docs,dql_browser)
++EOF
++}
++
++if [[ "$MODE" != "apply" && "$MODE" != "show" ]]; then
++  usage >&2
++  exit 1
++fi
++
++if [[ ! -d "$WORKSPACE" ]]; then
++  echo "Workspace not found: $WORKSPACE" >&2
++  exit 1
++fi
++
++IFS=',' read -r -a rigs <<< "$LOW_RISK_RIGS"
++cd "$WORKSPACE"
++
++for rig in "${rigs[@]}"; do
++  [[ -z "$rig" ]] && continue
++  if [[ "$MODE" == "apply" ]]; then
++    gt rig settings set "$rig" role_agents.witness "$SAFE_AGENT"
++    gt rig settings set "$rig" role_agents.refinery "$SAFE_AGENT"
++  fi
++  echo "=== $rig"
++  gt rig settings show "$rig" | jq '.role_agents'
++done
+diff --git a/scripts/gt-mise-bump-polecats b/scripts/gt-mise-bump-polecats
+index b1c61..a2339 100755
+--- a/scripts/gt-mise-bump-polecats
++++ b/scripts/gt-mise-bump-polecats
+@@ -122,7 +122,7 @@ EOF
+   bead_id="$(cd "$WORKSPACE" && command bd create --silent --rig "$RIG" --type chore --priority 3 --title "$title" --description "$desc")"
+   (
+     cd "$WORKSPACE"
+-    gt sling "$bead_id" "$RIG" --merge=local --no-convoy --formula "$FORMULA" --args "$args"
++    "$HOME/scripts/gt-sling-smart" "$bead_id" "$RIG" --risk low --merge=local --no-convoy --formula "$FORMULA" --args "$args"
+   )
+   echo "${bead_id} ${raw_tool} ${current} -> ${bump}"
+ }
+diff --git a/scripts/gt-sling-smart b/scripts/gt-sling-smart
+new file mode 100755
+index 00000..4f977
+--- /dev/null
++++ b/scripts/gt-sling-smart
+@@ -0,0 +1,185 @@
++#!/usr/bin/env bash
++set -euo pipefail
++
++SAFE_AGENT="${GT_SAFE_AGENT:-gemini}"
++RISKY_AGENT="${GT_RISKY_AGENT:-codex}"
++LOW_RISK_RIGS="${GT_LOW_RISK_RIGS:-forge,l8r,mintlify_docs,dql_browser}"
++WORKSPACE="${GT_WORKSPACE:-$HOME/gt}"
++
++usage() {
++  cat <<'EOF'
++Usage:
++  gt-sling-smart <bead> <target> [wrapper flags] [gt sling flags]
++
++Wrapper flags:
++  --risk <low|high>   Override auto classification.
++  --dry-run           Print selected route and resulting gt sling command.
++  -h, --help          Show this help.
++
++Notes:
++  - If --agent is already passed in gt sling flags, it is respected.
++  - Risk routing defaults:
++      low  -> $GT_SAFE_AGENT   (default: gemini)
++      high -> $GT_RISKY_AGENT  (default: codex)
++
++Examples:
++  gt-sling-smart dx-123 ditto_devx --merge=local
++  gt-sling-smart dx-123 ditto_devx --risk low --merge=local
++  gt-sling-smart dx-123 ditto_devx --agent claude --merge=local
++EOF
++}
++
++require_cmd() {
++  if ! command -v "$1" >/dev/null 2>&1; then
++    echo "Missing required command: $1" >&2
++    exit 1
++  fi
++}
++
++contains_csv_value() {
++  local needle="$1"
++  local csv="$2"
++  local item
++  IFS=',' read -r -a values <<< "$csv"
++  for item in "${values[@]}"; do
++    if [[ "$item" == "$needle" ]]; then
++      return 0
++    fi
++  done
++  return 1
++}
++
++require_cmd gt
++require_cmd bd
++require_cmd jq
++
++manual_risk=""
++dry_run=false
++declare -a positional=()
++declare -a gt_flags=()
++
++while [[ $# -gt 0 ]]; do
++  case "$1" in
++    --risk)
++      manual_risk="${2:-}"
++      shift 2
++      ;;
++    --dry-run)
++      dry_run=true
++      shift
++      ;;
++    -h|--help)
++      usage
++      exit 0
++      ;;
++    *)
++      positional+=("$1")
++      shift
++      ;;
++  esac
++done
++
++if [[ "${#positional[@]}" -lt 2 ]]; then
++  usage >&2
++  exit 1
++fi
++
++bead="${positional[0]}"
++target="${positional[1]}"
++if [[ "${#positional[@]}" -gt 2 ]]; then
++  gt_flags=("${positional[@]:2}")
++fi
++
++explicit_agent=false
++for ((i=0; i<${#gt_flags[@]}; i++)); do
++  token="${gt_flags[$i]}"
++  if [[ "$token" == "--agent" || "$token" == --agent=* ]]; then
++    explicit_agent=true
++    break
++  fi
++done
++
++rig="$target"
++if [[ "$target" == */* ]]; then
++  rig="${target%%/*}"
++fi
++
++title=""
++description=""
++issue_type=""
++json=""
++if json="$(command bd show "$bead" --json 2>/dev/null)"; then
++  :
++elif [[ -d "$WORKSPACE" ]] && json="$(cd "$WORKSPACE" && command bd show "$bead" --json 2>/dev/null)"; then
++  :
++fi
++
++if [[ -n "$json" ]]; then
++  title="$(printf '%s' "$json" | jq -r '.[0].title // ""')"
++  description="$(printf '%s' "$json" | jq -r '.[0].description // ""')"
++  issue_type="$(printf '%s' "$json" | jq -r '.[0].issue_type // ""')"
++fi
++
++text="${bead} ${title} ${description} ${issue_type}"
++text_lower="$(printf '%s' "$text" | tr '[:upper:]' '[:lower:]')"
++title_lower="$(printf '%s' "$title" | tr '[:upper:]' '[:lower:]')"
++description_lower="$(printf '%s' "$description" | tr '[:upper:]' '[:lower:]')"
++
++high_regex='rebase|merge conflict|release pipeline|release gate|security|auth|credential|secret|production|prod|hotfix|incident|migration|schema|rollback'
++low_regex='review|audit|inventory|summary|status|docs|documentation|cleanup|triage|classify|branch|report|outdated|bump|chore'
++
++risk="high"
++reason="default_high"
++if [[ -n "$manual_risk" ]]; then
++  case "$manual_risk" in
++    low|high)
++      risk="$manual_risk"
++      reason="manual"
++      ;;
++    *)
++      echo "Invalid --risk value: $manual_risk (expected low|high)" >&2
++      exit 1
++      ;;
++  esac
++elif [[ "$title_lower" =~ $low_regex ]]; then
++  risk="low"
++  reason="title_low_keyword"
++elif [[ "$title_lower" =~ $high_regex ]]; then
++  risk="high"
++  reason="title_high_keyword"
++elif [[ "$description_lower" =~ $high_regex ]]; then
++  risk="high"
++  reason="high_keyword"
++elif [[ "$description_lower" =~ $low_regex || "$text_lower" =~ $low_regex ]]; then
++  risk="low"
++  reason="low_keyword"
++elif contains_csv_value "$rig" "$LOW_RISK_RIGS"; then
++  risk="low"
++  reason="low_risk_rig"
++fi
++
++chosen_agent="$RISKY_AGENT"
++if [[ "$risk" == "low" ]]; then
++  chosen_agent="$SAFE_AGENT"
++fi
++
++cmd=(gt sling "$bead" "$target")
++if [[ "$explicit_agent" == false ]]; then
++  cmd+=(--agent "$chosen_agent")
++fi
++cmd+=("${gt_flags[@]}")
++
++if [[ "$explicit_agent" == true ]]; then
++  echo "routing: bead=$bead target=$target rig=$rig risk=$risk reason=$reason agent=explicit_from_flags"
++else
++  echo "routing: bead=$bead target=$target rig=$rig risk=$risk reason=$reason agent=$chosen_agent"
++fi
++
++if [[ "$dry_run" == true ]]; then
++  printf 'command: '
++  printf '%q ' "${cmd[@]}"
++  printf '\n'
++  exit 0
++fi
++
++"${cmd[@]}"

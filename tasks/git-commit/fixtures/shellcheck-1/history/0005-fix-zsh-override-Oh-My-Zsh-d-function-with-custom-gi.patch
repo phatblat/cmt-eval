@@ -1,0 +1,10 @@
+From 448c3c56f0faeb9a5a4903f22ad531f36af12e1b Mon Sep 17 00:00:00 2001
+From: Ben Chatelain <ben@octop.ad>
+Date: Sat, 18 Oct 2025 18:25:27 -0600
+Subject: [PATCH 5/8] fix(zsh): override Oh My Zsh d function with custom git
+ diff
+
+Oh My Zsh's directories.zsh defines 'd' as a directory stack viewer,
+which conflicts with our custom git diff function. Undefine the
+Oh My Zsh version and re-autoload our custom function to ensure
+it takes precedence.

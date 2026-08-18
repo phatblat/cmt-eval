@@ -1,0 +1,34 @@
+From 01436a9492c3b1dbd1dc31ab4b5be9d9abd02e78 Mon Sep 17 00:00:00 2001
+From: Ben Chatelain <ben@octop.ad>
+Date: Sat, 18 Oct 2025 19:42:11 -0600
+Subject: [PATCH 7/8] refactor(zsh): reduce to single blank line after shebang
+
+Change from two blank lines to one blank line after the shebang
+in all function files for cleaner formatting.
+---
+ .config/zsh/functions/ignore | 1 -
+ .config/zsh/functions/list   | 1 -
+ 2 files changed, 2 deletions(-)
+
+diff --git a/.config/zsh/functions/ignore b/.config/zsh/functions/ignore
+index 8e0c..4060 100644
+--- a/.config/zsh/functions/ignore
++++ b/.config/zsh/functions/ignore
+@@ -1,6 +1,5 @@
+ #!/usr/bin/env zsh
+ 
+-
+ function ignore() {
+     local gitignore="$(root)/.gitignore"
+     local ignore_list
+diff --git a/.config/zsh/functions/list b/.config/zsh/functions/list
+index cc3a..6eb4 100644
+--- a/.config/zsh/functions/list
++++ b/.config/zsh/functions/list
+@@ -1,6 +1,5 @@
+ #!/usr/bin/env zsh
+ 
+-
+ function list() {
+     if [[ -z "$@" ]]; then
+         echo "Usage: list [-s] 1 2 3 4 ..." >&2

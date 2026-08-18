@@ -1,0 +1,263 @@
+From be75db9af9707ca6d0bc245459906b0b8c28edc4 Mon Sep 17 00:00:00 2001
+From: Ben Chatelain <ben@octop.ad>
+Date: Wed, 12 Aug 2026 08:06:30 -0400
+Subject: [PATCH 6/8] ci: Make required checks always report, and gate
+ agent-authored work
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Preparation for pinning lint, test, and parity as required status checks on
+main. All three filtered at the `on:` trigger, so a pull request touching none
+of their paths produced no check run at all — and a required check that never
+runs leaves the pull request stuck on "Expected" forever. Making them required
+in that state would have deadlocked every unrelated pull request.
+
+The filter moves into the jobs. Workflows always start; changed.sh decides
+whether the expensive steps run, so a check always reports. Path lists live in
+one place instead of being duplicated across triggers.
+
+While moving them, the parity filter gains .agents/skills/**. Shared skills are
+a generator input (SKILL_SOURCE), so editing one can leave generated adapters
+stale, and until now that produced no parity signal on a pull request.
+
+human-approval.yml is the gate itself. A review count cannot serve here: GitHub
+disables self-approval, so required_approving_review_count on a solo repository
+would deadlock every pull request. Instead an agent labels its own work
+loop-authored, and the check fails until a human adds human-approved. Applying
+the label is the human act; the ruleset is what makes it unskippable. Pull
+requests without the loop-authored label pass straight through, so this costs
+nothing on hand-written work.
+
+Label names reach the runner through env as JSON and are never interpolated
+into the script body — a label is attacker-controllable text.
+
+The ruleset changes themselves are applied through the GitHub API, by hand,
+after this merges. Doing it earlier would block every pull request on checks
+that do not yet exist on main.
+
+Co-Authored-By: Claude <noreply@anthropic.com>
+---
+ .github/scripts/changed.sh           | 53 ++++++++++++++++++++++++++++
+ .github/workflows/human-approval.yml | 49 +++++++++++++++++++++++++
+ .github/workflows/lint.yml           | 40 ++++++++++++++-------
+ 3 files changed, 130 insertions(+), 12 deletions(-)
+ create mode 100755 .github/scripts/changed.sh
+ create mode 100644 .github/workflows/human-approval.yml
+
+diff --git a/.github/scripts/changed.sh b/.github/scripts/changed.sh
+new file mode 100755
+index 0000..8790
+--- /dev/null
++++ b/.github/scripts/changed.sh
+@@ -0,0 +1,53 @@
++#!/usr/bin/env bash
++# Decide whether a workflow's expensive steps need to run for this event.
++#
++# `lint`, `test`, and `parity` are required status checks. A required check that
++# never runs leaves a pull request stuck on "Expected", so the workflows can no
++# longer filter at the `on:` trigger — they always start, and this script tells
++# them whether there is anything to do. Path lists live here only.
++#
++# Writes `relevant=true|false` to $GITHUB_OUTPUT. Fails open: anything other than
++# a pull request, or any trouble reading the diff, reports true.
++#
++# Copyright: Ben Chatelain. MIT
++set -euo pipefail
++
++profile="${1:?usage: changed.sh <lint|parity>}"
++
++case "$profile" in
++lint)
++	pattern='^(\.config/(fish|home-manager|nushell)/|\.config/zsh/functions/|\.config/mise/config\.toml$|\.gitignore$|bin/|justfile$|scripts/|tests/|\.github/(workflows/lint\.yml|scripts/changed\.sh)$)'
++	;;
++parity)
++	# .agents/skills/** is a generator input (SKILL_SOURCE) and belongs here:
++	# editing a shared skill can leave generated adapters stale.
++	pattern='^(\.agents/|\.claude/(commands|skills)/|\.codex/(agents|skills)/|\.config/opencode/|\.cursor/|\.gemini/|\.pi/|\.omp/|scripts/agent-harnesses\.py$|scripts/agent_plugins\.py$|docs/agent-harnesses\.|\.github/(workflows/agent-harness-parity\.yml|scripts/changed\.sh)$)'
++	;;
++*)
++	echo "unknown profile: $profile" >&2
++	exit 64
++	;;
++esac
++
++emit() {
++	echo "relevant=$1" >>"${GITHUB_OUTPUT:-/dev/stdout}"
++	echo "relevant=$1 (profile: $profile)" >&2
++}
++
++if [[ ${GITHUB_EVENT_NAME:-} != "pull_request" ]]; then
++	emit true
++	exit 0
++fi
++
++base="${BASE_SHA:-}"
++if [[ -z $base ]] || ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
++	echo "base commit unavailable; running everything" >&2
++	emit true
++	exit 0
++fi
++
++if git diff --name-only "$base" HEAD | grep -qE "$pattern"; then
++	emit true
++else
++	emit false
++fi
+diff --git a/.github/workflows/human-approval.yml b/.github/workflows/human-approval.yml
+new file mode 100644
+index 0000..2201
+--- /dev/null
++++ b/.github/workflows/human-approval.yml
+@@ -0,0 +1,49 @@
++name: human-approval
++
++# The merge gate for agent-authored pull requests.
++#
++# A review count cannot serve here: GitHub disables self-approval, and this is a
++# solo repository, so `required_approving_review_count: 1` would deadlock every
++# pull request. Instead an agent labels its own work `loop-authored`, and this
++# check fails until a human adds `human-approved`. Applying a label is the human
++# act; the ruleset makes the check non-bypassable.
++#
++# Human-authored pull requests carry no `loop-authored` label and pass straight
++# through, so this costs nothing on ordinary work.
++
++on:
++  pull_request:
++    types:
++      - opened
++      - synchronize
++      - reopened
++      - labeled
++      - unlabeled
++      - ready_for_review
++      - converted_to_draft
++
++permissions:
++  contents: read
++
++jobs:
++  human-approval:
++    runs-on: ubuntu-latest
++    timeout-minutes: 5
++    steps:
++      - name: Require explicit sign-off on agent-authored changes
++        env:
++          # Label names reach the runner as JSON, never interpolated into the
++          # script body — a label is attacker-controllable text.
++          LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
++        run: |
++          set -euo pipefail
++          if ! printf '%s' "$LABELS" | grep -q '"loop-authored"'; then
++            echo "No loop-authored label — human-authored pull request, gate not applicable."
++            exit 0
++          fi
++          if printf '%s' "$LABELS" | grep -q '"human-approved"'; then
++            echo "human-approved label present — sign-off recorded."
++            exit 0
++          fi
++          echo "::error::This pull request is labeled loop-authored. Read the diff, then add the 'human-approved' label to merge."
++          exit 1
+diff --git a/.github/workflows/lint.yml b/.github/workflows/lint.yml
+index 9d1d..84ff 100644
+--- a/.github/workflows/lint.yml
++++ b/.github/workflows/lint.yml
+@@ -15,19 +15,11 @@ on:
+       - "scripts/**"
+       - "tests/**"
+       - ".github/workflows/lint.yml"
++  # No paths filter on pull_request, deliberately. `lint` and `test` are required
++  # status checks, and a required check that never runs leaves the pull request
++  # stuck on "Expected" forever. The jobs always start and decide for themselves
++  # whether there is work to do — see the "Detect relevant changes" step.
+   pull_request:
+-    paths:
+-      - ".config/fish/**"
+-      - ".config/home-manager/**"
+-      - ".config/nushell/**"
+-      - ".config/zsh/functions/**"
+-      - ".config/mise/config.toml"
+-      - ".gitignore"
+-      - "bin/**"
+-      - "justfile"
+-      - "scripts/**"
+-      - "tests/**"
+-      - ".github/workflows/lint.yml"
+   schedule:
+     # Weekly Monday 06:00 UTC — catch drift from tool updates
+     - cron: "0 6 * * 1"
+@@ -47,27 +39,39 @@ jobs:
+       MISE_ENABLE_TOOLS: "just,shellcheck,ruff,bats,github:nushell/nushell,python,pipx:yamllint"
+     steps:
+       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
++        with:
++          fetch-depth: 0
++
++      - name: Detect relevant changes
++        id: changed
++        env:
++          BASE_SHA: ${{ github.event.pull_request.base.sha }}
++        run: ./.github/scripts/changed.sh lint
+ 
+       # Let the action run the install: it only caches tools it installed
+       # itself, so `install: false` plus a separate `mise install` step meant
+       # the cache was never written. install_args keeps the tool set scoped.
+       - name: Install mise and tools
++        if: steps.changed.outputs.relevant == 'true'
+         uses: jdx/mise-action@7e36c90d9ab29c415a2384db3006f3ec8a8cc654 # v4.2.4
+         with:
+           install_args: "just shellcheck ruff bats github:nushell/nushell python pipx:yamllint"
+ 
+       - name: Install fish and zsh
++        if: steps.changed.outputs.relevant == 'true'
+         run: |
+           # Runner-provided Microsoft repositories intermittently return 403.
+           sudo rm -f /etc/apt/sources.list.d/azure-cli.list /etc/apt/sources.list.d/microsoft-prod.list
+           sudo apt-get update && sudo apt-get install -y fish zsh
+ 
+       - name: Lint
++        if: steps.changed.outputs.relevant == 'true'
+         run: |
+           eval "$(mise activate bash)"
+           just lint
+ 
+       - name: Validate nix flake
++        if: steps.changed.outputs.relevant == 'true'
+         run: nix flake show --json "$HOME/.config/home-manager" 2>&1 | head -20
+         continue-on-error: true
+ 
+@@ -86,21 +90,33 @@ jobs:
+       GIT_CONFIG_VALUE_0: "false"
+     steps:
+       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
++        with:
++          fetch-depth: 0
++
++      - name: Detect relevant changes
++        id: changed
++        env:
++          BASE_SHA: ${{ github.event.pull_request.base.sha }}
++        run: ./.github/scripts/changed.sh lint
+ 
+       - name: Install mise and tools
++        if: steps.changed.outputs.relevant == 'true'
+         uses: jdx/mise-action@7e36c90d9ab29c415a2384db3006f3ec8a8cc654 # v4.2.4
+         with:
+           install_args: "just shellcheck ruff bats bat starship aqua:shenwei356/rush github:nushell/nushell"
+ 
+       - name: Install fish and test-exercised tools
++        if: steps.changed.outputs.relevant == 'true'
+         run: brew install fish diff-so-fancy git-subrepo
+ 
+       - name: Generate SSH key for sshkey tests
++        if: steps.changed.outputs.relevant == 'true'
+         run: |
+           mkdir -p "$HOME/.ssh"
+           ssh-keygen -q -t ed25519 -N "" -f "$HOME/.ssh/id_ed25519"
+ 
+       - name: Test
++        if: steps.changed.outputs.relevant == 'true'
+         run: |
+           eval "$(mise activate bash)"
+           just test

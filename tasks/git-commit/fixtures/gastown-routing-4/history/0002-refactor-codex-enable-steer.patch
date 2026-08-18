@@ -1,0 +1,5 @@
+From 0fc312b6d3223feddf13c7697baf969b28e668ac Mon Sep 17 00:00:00 2001
+From: Ben Chatelain <ben@octop.ad>
+Date: Mon, 2 Mar 2026 11:26:03 -0700
+Subject: [PATCH 2/8] refactor(codex): enable steer
+

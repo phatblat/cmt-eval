@@ -1,0 +1,24 @@
+id = "harness-ci-docs-3"
+description = "safety-policy fix + CI fix + spec doc correction: three unrelated concerns"
+expectedCommits = 3
+timeoutS = 420
+
+[source]
+repo = "/Users/phatblat"
+base = "13a3a5e3a585"
+commits = ["b21fb6e5f87a", "d419f4c8098d", "d49834889729"]
+
+[[group]]
+type = "fix"
+subject = "harness: Apply path rules to shell commands, not just write tools"
+paths = [".agents/harness/hooks/safety.py", "tests/agent-harnesses.bats"]
+
+[[group]]
+type = "ci"
+subject = "Fix a SIGPIPE race that could skip required checks, and widen lint's paths"
+paths = [".github/scripts/changed.sh", ".github/workflows/human-approval.yml", ".github/workflows/lint.yml"]
+
+[[group]]
+type = "docs"
+subject = "specs: Correct spec 001's category and complete its targets"
+paths = ["docs/specs/001-self-improvement-loop.md"]

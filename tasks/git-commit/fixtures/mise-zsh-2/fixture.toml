@@ -1,0 +1,19 @@
+id = "mise-zsh-2"
+description = "mise config downgrade + zsh double-sourcing fix: two unrelated concerns"
+expectedCommits = 2
+timeoutS = 300
+
+[source]
+repo = "/Users/phatblat"
+base = "ffce3a82b236"
+commits = ["27e670fd7654", "7b2ab943431c"]
+
+[[group]]
+type = "chore"
+subject = "mise: downgrade android build-tools to 36.0.0"
+paths = [".config/mise/config.toml"]
+
+[[group]]
+type = "fix"
+subject = "zsh: avoid double-sourcing .zshrc on interactive login shells"
+paths = [".zprofile", ".zshenv", ".zshrc"]

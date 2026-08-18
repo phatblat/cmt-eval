@@ -1,0 +1,19 @@
+From 285aea8bfd6c92d3e4096f6ef7c5f330e56d8889 Mon Sep 17 00:00:00 2001
+From: Ben Chatelain <ben@octop.ad>
+Date: Wed, 12 Aug 2026 08:06:29 -0400
+Subject: [PATCH 3/8] fix(hooks): Make pre-commit-format run on bash 3.2
+
+The hook opened with `declare -A`, an associative array builtin that bash 4
+introduced. macOS ships bash 3.2, and settings.json invokes the script as
+`bash ~/.claude/hooks/scripts/pre-commit-format.sh` rather than through the
+shebang, so the builtin was never available.
+
+Under `set -euo pipefail` that failed on line 8, before any formatting ran.
+The hook is wired to `Bash(git commit*)` and fails closed, so the effect was
+not a skipped format step but a blocked commit: no commit issued through
+Claude Code could run at all, and `just format` never executed pre-commit.
+
+Replaces the map with two "<hash> <path>" snapshots compared by line. Paths
+containing spaces still round-trip, because a git hash never contains one.
+
+Co-Authored-By: Claude <noreply@anthropic.com>

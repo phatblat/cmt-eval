@@ -1,0 +1,309 @@
+diff --git a/.agents/harness/hooks/safety.py b/.agents/harness/hooks/safety.py
+index 0928..637d 100755
+--- a/.agents/harness/hooks/safety.py
++++ b/.agents/harness/hooks/safety.py
+@@ -6,10 +6,10 @@ Copyright: Ben Chatelain. Apache 2.0.
+ 
+ from __future__ import annotations
+ 
+-from dataclasses import dataclass
+ import os
+ import re
+ import subprocess
++from dataclasses import dataclass
+ from pathlib import Path
+ 
+ 
+@@ -82,15 +82,24 @@ PROTECTED_PATHS = re.compile(
+ # Deliberately narrow. Broad entries like `config\.yml$` or `\.gitignore$` would
+ # block routine agent work across every repository, and the cost of that lands
+ # on every session, not just on a self-improvement loop.
++#
++# Fragments end with a non-path lookahead rather than `$` so the same pattern
++# matches both a bare path and a path embedded in a shell command.
++_CONTROL_PLANE_FRAGMENTS = (
++    r"/\.agents/harness/hooks/",
++    r"/\.agents/harness/self-improve-policy\.json(?![\w.-])",
++    # The generated-path manifest is the whole basis of the generated-file deny
++    # rule, and load_generated_manifest() fails open. Blanking this file would
++    # silently unlock all 274 generated artifacts, so it is control plane too.
++    r"/\.agents/harness/generated-paths\.json(?![\w.-])",
++    r"/scripts/agent-harnesses\.py(?![\w.-])",
++    r"/scripts/agent_plugins\.py(?![\w.-])",
++    r"/harness-guard\.(?:ts|py)(?![\w.-])",
++    r"/(?:write|bash)-guard\.sh(?![\w.-])",
++)
++
+ CONTROL_PLANE_PATHS = re.compile(
+-    r"("
+-    r"/\.agents/harness/hooks/|"
+-    r"/\.agents/harness/self-improve-policy\.json$|"
+-    r"/scripts/agent-harnesses\.py$|"
+-    r"/scripts/agent_plugins\.py$|"
+-    r"/harness-guard\.(ts|py)$|"
+-    r"/(write|bash)-guard\.sh$"
+-    r")",
++    "(?:" + "|".join(_CONTROL_PLANE_FRAGMENTS) + ")",
+     re.IGNORECASE,
+ )
+ 
+@@ -140,6 +149,21 @@ def evaluate_command(command: str, *, cwd: str | None = None) -> GuardDecision:
+     if any(pattern.search(command) for pattern in OBFUSCATED_EXECUTION):
+         return GuardDecision("deny", "Obfuscated execution pattern detected")
+ 
++    # Path rules have to apply here too, not just in evaluate_write: `echo x >>
++    # safety.py` reaches the same file as a write tool, and until this existed
++    # one line of shell switched off every path rule in this module.
++    target = writes_to(command, PROTECTED_PATHS)
++    if target:
++        return GuardDecision("deny", f"protected file blocked: {target}")
++
++    target = writes_to(command, CONTROL_PLANE_PATHS)
++    if target:
++        return GuardDecision(
++            "deny",
++            f"control-plane file is human-only: {target}. It decides what the "
++            "guard permits, so edit it directly rather than through an agent.",
++        )
++
+     warning = main_branch_commit_warning(command, cwd=cwd)
+     if warning:
+         return GuardDecision("warn", warning)
+@@ -165,6 +189,47 @@ def evaluate_write(*, path: str = "", content: str = "") -> GuardDecision:
+     return GuardDecision("allow")
+ 
+ 
++# Shell constructs that name a file the command writes to. Each captures the
++# span in which a target may appear; path-like tokens are pulled out of it and
++# matched against the ordinary path rules.
++_REDIRECT_TARGET = re.compile(r">>?\s*(?P<span>[^\s;|&<>]+)")
++_MUTATING_ARGV = re.compile(
++    r"\b(?:rm|mv|cp|tee|ln|install|truncate|shred|unlink|touch|chmod|chown)\b"
++    r"(?P<span>[^;|&]*)",
++    re.IGNORECASE,
++)
++_SED_INPLACE = re.compile(r"\bsed\b(?P<span>[^;|&]*?-i(?:\S*)?[^;|&]*)", re.IGNORECASE)
++_DD_TARGET = re.compile(r"\bdd\b[^;|&]*?\bof=(?P<span>[^\s;|&]+)", re.IGNORECASE)
++
++_PATH_TOKEN = re.compile(r"[^\s;|&<>'\"]*[/~][^\s;|&<>'\"]*")
++
++
++def candidate_write_targets(command: str) -> list[str]:
++    """Path-like tokens that a shell command appears to write to.
++
++    Regex, not a shell parser. It recognizes redirection, the common mutating
++    commands, `sed -i`, and `dd of=`. A here-doc, a `python3 -c` one-liner, or
++    an alias will get past it, and that is understood: the job here is to stop
++    the guard being switched off by an ordinary one-line edit, not to sandbox
++    the shell. The merge gate is what actually holds.
++    """
++
++    targets: list[str] = []
++    for pattern in (_REDIRECT_TARGET, _MUTATING_ARGV, _SED_INPLACE, _DD_TARGET):
++        for match in pattern.finditer(command):
++            targets.extend(_PATH_TOKEN.findall(match.group("span")))
++    return [token.strip("'\"") for token in targets if token.strip("'\"")]
++
++
++def writes_to(command: str, pattern: re.Pattern[str]) -> str:
++    """The first write target in `command` matching `pattern`, else ""."""
++
++    for target in candidate_write_targets(command):
++        if pattern.search(normalize_path_for_matching(target)):
++            return target
++    return ""
++
++
+ def normalize_path_for_matching(path: str) -> str:
+     expanded = os.path.expanduser(path)
+     try:
+diff --git a/.github/scripts/changed.sh b/.github/scripts/changed.sh
+index a5bf..e47bc 100755
+--- a/.github/scripts/changed.sh
++++ b/.github/scripts/changed.sh
+@@ -16,7 +16,11 @@ profile="${1:?usage: changed.sh <lint|parity>}"
+ 
+ case "$profile" in
+ lint)
+-	pattern='^(\.config/(fish|home-manager|nushell)/|\.config/zsh/functions/|\.config/mise/config\.toml$|\.gitignore$|bin/|justfile$|scripts/|tests/|\.github/(workflows/lint\.yml|scripts/changed\.sh)$)'
++	# Mirrors what `just lint` actually reads: lint-yaml covers every tracked
++	# *.yml/*.yaml, lint-toml validates .codex/config.toml, and lint-python
++	# covers scripts/*.py. Narrower than this and a lint failure surfaces on
++	# some later unrelated pull request instead of the one that caused it.
++	pattern='^(\.config/(fish|home-manager|nushell)/|\.config/zsh/functions/|\.config/mise/config\.toml$|\.codex/config\.toml$|\.gitignore$|bin/|justfile$|scripts/|tests/|\.github/(workflows|scripts)/|.*\.ya?ml$)'
+ 	;;
+ parity)
+ 	# .agents/skills/** is a generator input (SKILL_SOURCE) and belongs here:
+@@ -46,7 +50,18 @@ if [[ -z $base ]] || ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
+ 	exit 0
+ fi
+ 
+-if git diff --name-only "$base" HEAD | grep -qE "$pattern"; then
++# Captured rather than piped into grep. Under `set -o pipefail`, `grep -q` exits
++# on its first match and the still-writing `git diff` takes SIGPIPE, which makes
++# the pipeline report failure — so a *matching* diff would have taken the else
++# branch and reported relevant=false, skipping a required check on exactly the
++# large pull requests that most need it.
++if ! changed_files="$(git diff --name-only "$base" HEAD)"; then
++	echo "diff failed; running everything" >&2
++	emit true
++	exit 0
++fi
++
++if grep -qE "$pattern" <<<"$changed_files"; then
+ 	emit true
+ else
+ 	emit false
+diff --git a/.github/workflows/human-approval.yml b/.github/workflows/human-approval.yml
+index 40fae75..d965 100644
+--- a/.github/workflows/human-approval.yml
++++ b/.github/workflows/human-approval.yml
+@@ -5,8 +5,20 @@ name: human-approval
+ # A review count cannot serve here: GitHub disables self-approval, and this is a
+ # solo repository, so `required_approving_review_count: 1` would deadlock every
+ # pull request. Instead an agent labels its own work `agent-authored`, and this
+-# check fails until a human adds `human-approved`. Applying a label is the human
+-# act; the ruleset makes the check non-bypassable.
++# check fails until a human adds `human-approved`. Applying the label is the
++# human act.
++#
++# ADVISORY UNTIL THE RULESET LANDS. This check reports, but nothing yet stops a
++# merge without it: ruleset 13542903 has no required_status_checks rule and its
++# bypass_actors still grants repository admins `always`. Both are manual,
++# post-merge steps (spec 001, Out of scope), and until they are applied this
++# file documents an intent rather than enforcing one. Do not treat an
++# agent-authored pull request as gated before then.
++#
++# Nor does anything here prove a *human* applied the label — an agent with a
++# repo token can add it via the API. A guard rule against `gh label` would not
++# change that, only the route. Sign-off is trustworthy to the degree the token
++# handed to the agent is scoped, which is a separate piece of work.
+ #
+ # Human-authored pull requests carry no `agent-authored` label and pass straight
+ # through, so this costs nothing on ordinary work.
+@@ -37,11 +49,13 @@ jobs:
+           LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+         run: |
+           set -euo pipefail
+-          if ! printf '%s' "$LABELS" | grep -q '"agent-authored"'; then
++          # jq, not grep: a substring match on the JSON text also accepts a
++          # label crafted to embed the name, e.g. `x"human-approved`.
++          if ! jq -e 'index("agent-authored")' <<<"$LABELS" >/dev/null; then
+             echo "No agent-authored label — human-authored pull request, gate not applicable."
+             exit 0
+           fi
+-          if printf '%s' "$LABELS" | grep -q '"human-approved"'; then
++          if jq -e 'index("human-approved")' <<<"$LABELS" >/dev/null; then
+             echo "human-approved label present — sign-off recorded."
+             exit 0
+           fi
+diff --git a/.github/workflows/lint.yml b/.github/workflows/lint.yml
+index 84ff..158ca 100644
+--- a/.github/workflows/lint.yml
++++ b/.github/workflows/lint.yml
+@@ -14,7 +14,12 @@ on:
+       - "justfile"
+       - "scripts/**"
+       - "tests/**"
+-      - ".github/workflows/lint.yml"
++      - ".codex/config.toml"
++      - "**.yml"
++      - "**.yaml"
++      # changed.sh decides whether the pull_request run does any work, so a
++      # main-branch commit touching only it still needs a post-merge lint.
++      - ".github/scripts/**"
+   # No paths filter on pull_request, deliberately. `lint` and `test` are required
+   # status checks, and a required check that never runs leaves the pull request
+   # stuck on "Expected" forever. The jobs always start and decide for themselves
+diff --git a/docs/specs/001-self-improvement-loop.md b/docs/specs/001-self-improvement-loop.md
+index c9bc5..420fb 100644
+--- a/docs/specs/001-self-improvement-loop.md
++++ b/docs/specs/001-self-improvement-loop.md
+@@ -1,7 +1,10 @@
+ ---
+ id: 001
+ title: Self-improving harness loop — safety substrate first
+-category: harness-config
++# safety-policy, not harness-config: this spec edits CONTROL_PLANE_PATHS and
++# creates the autonomy policy, both `never` tier. auto_implement: false already
++# follows from that, but the category should not understate it.
++category: safety-policy
+ status: approved
+ approved_by: phatblat
+ approved_at: 2026-08-12
+@@ -19,12 +22,17 @@ evidence:
+ targets:
+   sources:
+     - ".agents/harness/hooks/safety.py"
++    - ".agents/harness/self-improve-policy.json"
+     - "scripts/agent-harnesses.py"
++    - ".github/scripts/changed.sh"
+     - ".github/workflows/lint.yml"
+     - ".github/workflows/agent-harness-parity.yml"
+     - ".github/workflows/human-approval.yml"
+     - "tests/agent-harnesses.bats"
+-  generated: []
++  # generated-paths.json is emitted by render_all(), so it is listed here rather
++  # than under sources even though the spec causes it to exist.
++  generated:
++    - ".agents/harness/generated-paths.json"
+ verification: "HOME=$PWD just check"
+ rollback: "git revert <sha>"
+ ---
+diff --git a/tests/agent-harnesses.bats b/tests/agent-harnesses.bats
+index e416..2e9cc 100644
+--- a/tests/agent-harnesses.bats
++++ b/tests/agent-harnesses.bats
+@@ -571,7 +571,8 @@ if missing:
+   for target in \
+     ".agents/harness/hooks/safety.py" \
+     "scripts/agent-harnesses.py" \
+-    ".agents/harness/self-improve-policy.json"; do
++    ".agents/harness/self-improve-policy.json" \
++    ".agents/harness/generated-paths.json"; do
+     run python3 "$SCRIPT" guard --harness omp --tool write \
+       --path "$HOME/$target" --content "x"
+ 
+@@ -580,6 +581,42 @@ if missing:
+   done
+ }
+ 
++# The path rules were write-tool-only, so `echo x >> safety.py` reached the
++# guard's own source and one redirect could blank the generated-path manifest,
++# taking every generated artifact unprotected with it.
++@test "agent-harnesses: guard denies shell writes to protected and control-plane paths" {
++  for command in \
++    "echo x >> $HOME/.agents/harness/hooks/safety.py" \
++    "echo '{}' > $HOME/.agents/harness/generated-paths.json" \
++    "rm $HOME/.agents/harness/generated-paths.json" \
++    "mv /tmp/x $HOME/.agents/harness/self-improve-policy.json" \
++    "sed -i '' s/deny/allow/ $HOME/scripts/agent-harnesses.py" \
++    "cp /tmp/evil $HOME/.claude/.credentials.json" \
++    "echo x >> $HOME/.ssh/id_rsa"; do
++    run python3 "$SCRIPT" guard --harness omp --tool bash --command "$command"
++
++    [ "$status" -eq 2 ]
++    [ "$(printf '%s' "$output" | jq -r '.decision')" = "deny" ]
++  done
++}
++
++# The guard shells out to the generator, so denying every command that merely
++# names a control-plane path would deadlock the harness against itself.
++@test "agent-harnesses: guard allows reads and unrelated writes near the control plane" {
++  for command in \
++    "python3 $HOME/scripts/agent-harnesses.py generate" \
++    "python3 $HOME/scripts/agent-harnesses.py validate 2>/dev/null" \
++    "cat $HOME/.agents/harness/hooks/safety.py" \
++    "grep -n deny $HOME/scripts/agent-harnesses.py" \
++    "echo hi > /tmp/unrelated.txt" \
++    "rm -f build/out.txt"; do
++    run python3 "$SCRIPT" guard --harness omp --tool bash --command "$command"
++
++    [ "$status" -eq 0 ]
++    [ "$(printf '%s' "$output" | jq -r '.decision')" = "allow" ]
++  done
++}
++
+ @test "agent-harnesses: provenance classifies generated, source, and generator paths" {
+   run python3 "$SCRIPT" provenance --json --path "$HOME/.pi/agent/agents.json"
+   [ "$status" -eq 0 ]

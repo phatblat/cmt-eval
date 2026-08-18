@@ -1,0 +1,15 @@
+task = "git-commit"
+models = ["anthropic/claude-haiku-4-5"]
+thinking = ["low"]
+fixtures = ["mise-zsh-2", "harness-ci-docs-3"]
+reps = 1
+perProviderJobs = 1
+retries = 2
+
+[weights]
+countMatch = 0.40
+groupingScore = 0.30
+convMsgs = 0.10
+trailerOk = 0.10
+treeClean = 0.05
+typeMatch = 0.05

@@ -1,0 +1,98 @@
+From 9db28db1033e3e0e2784666ae037bb9ac044f11e Mon Sep 17 00:00:00 2001
+From: Ben Chatelain <ben@octop.ad>
+Date: Mon, 2 Mar 2026 11:26:03 -0700
+Subject: [PATCH 6/8] feat(codexbar): add config.json
+
+---
+ .codexbar/config.json | 81 +++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 81 insertions(+)
+ create mode 100644 .codexbar/config.json
+
+diff --git a/.codexbar/config.json b/.codexbar/config.json
+new file mode 100644
+index 0000..0d59
+--- /dev/null
++++ b/.codexbar/config.json
+@@ -0,0 +1,81 @@
++{
++  "providers" : [
++    {
++      "enabled" : true,
++      "id" : "codex"
++    },
++    {
++      "enabled" : true,
++      "id" : "claude"
++    },
++    {
++      "enabled" : false,
++      "id" : "cursor"
++    },
++    {
++      "enabled" : false,
++      "id" : "opencode"
++    },
++    {
++      "enabled" : false,
++      "id" : "factory"
++    },
++    {
++      "enabled" : true,
++      "id" : "gemini"
++    },
++    {
++      "enabled" : false,
++      "id" : "antigravity"
++    },
++    {
++      "enabled" : false,
++      "id" : "copilot"
++    },
++    {
++      "enabled" : false,
++      "id" : "zai"
++    },
++    {
++      "enabled" : false,
++      "id" : "minimax"
++    },
++    {
++      "enabled" : false,
++      "id" : "kimi"
++    },
++    {
++      "enabled" : false,
++      "id" : "kiro"
++    },
++    {
++      "enabled" : false,
++      "id" : "vertexai"
++    },
++    {
++      "enabled" : false,
++      "id" : "augment"
++    },
++    {
++      "enabled" : false,
++      "id" : "jetbrains"
++    },
++    {
++      "enabled" : false,
++      "id" : "kimik2"
++    },
++    {
++      "enabled" : false,
++      "id" : "amp"
++    },
++    {
++      "enabled" : false,
++      "id" : "synthetic"
++    },
++    {
++      "enabled" : false,
++      "id" : "warp"
++    }
++  ],
++  "version" : 1
++}
+\ No newline at end of file

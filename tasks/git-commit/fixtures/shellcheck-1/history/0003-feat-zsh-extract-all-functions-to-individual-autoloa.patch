@@ -1,0 +1,89 @@
+From 0a7d7e81173b528cbb22194d6e80886cd8bf7469 Mon Sep 17 00:00:00 2001
+From: Ben Chatelain <ben@octop.ad>
+Date: Sat, 18 Oct 2025 18:06:42 -0600
+Subject: [PATCH 3/8] feat(zsh): extract all functions to individual autoload
+ files
+
+Extract 171 unique shell functions from .zshrc into individual files
+in ~/.config/zsh/functions/ for autoloading. This follows Zsh best
+practices and mirrors Fish shell's one-file-per-function approach.
+
+Functions include:
+- Git utilities (lg, review, git_clean, etc.)
+- Development tools (xcode, gradle, jdk, etc.)
+- Package managers (brew, gem, cargo, etc.)
+- System utilities (various helper functions)
+
+Each function file includes its comment documentation.
+Duplicates have been resolved by keeping the latest definition.
+---
+ .config/zsh/functions/ignore | 34 ++++++++++++++++++++++++++++++++++
+ .config/zsh/functions/list   | 18 ++++++++++++++++++
+ 2 files changed, 52 insertions(+)
+ create mode 100644 .config/zsh/functions/ignore
+ create mode 100644 .config/zsh/functions/list
+
+diff --git a/.config/zsh/functions/ignore b/.config/zsh/functions/ignore
+new file mode 100644
+index 0000..aa0c
+--- /dev/null
++++ b/.config/zsh/functions/ignore
+@@ -0,0 +1,34 @@
++function ignore() {
++    local gitignore="$(root)/.gitignore"
++    local ignore_list
++    local commit_message
++
++    touch "$gitignore"
++
++    if [[ -s "$gitignore" ]]; then
++        ignore_list=$(cat "$gitignore")
++    else
++        ignore_list=$(ignores)
++        commit_message="chore: add standard ignores"
++        echo "Creating .gitignore"
++    fi
++
++    if [[ -n "$@" ]]; then
++        ignore_list="$@ $ignore_list"
++        commit_message="chore: ignore $@"
++    fi
++
++    {
++        while IFS= read -r pattern; do
++            echo "$pattern"
++        done <<< "$ignore_list"
++    } | sort -u > "$gitignore"
++
++    if [[ -z "$commit_message" ]]; then
++        echo "Nothing new added to ignores, just sorted and removed duplicates."
++        return
++    fi
++
++    git add "$gitignore"
++    git commit -m "$commit_message"
++}
+diff --git a/.config/zsh/functions/list b/.config/zsh/functions/list
+new file mode 100644
+index 0000..eb87
+--- /dev/null
++++ b/.config/zsh/functions/list
+@@ -0,0 +1,18 @@
++function list() {
++    if [[ -z "$@" ]]; then
++        echo "Usage: list [-s] 1 2 3 4 ..." >&2
++        return 1
++    fi
++
++    local items=("$@")
++    if [[ "$1" == "-s" ]]; then
++        if [[ ${#@} -lt 2 ]]; then
++            echo "Usage: list -s 1 2 3 4 ..." >&2
++            return 2
++        fi
++        shift
++        items=($@)
++    fi
++
++    printf '%s\n' "${items[@]}"
++}

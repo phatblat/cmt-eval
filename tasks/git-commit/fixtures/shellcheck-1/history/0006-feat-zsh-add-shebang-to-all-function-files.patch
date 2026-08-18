@@ -1,0 +1,40 @@
+From 3f754cd7981ffedeadb47abd8deecda717be883e Mon Sep 17 00:00:00 2001
+From: Ben Chatelain <ben@octop.ad>
+Date: Sat, 18 Oct 2025 19:36:45 -0600
+Subject: [PATCH 6/8] feat(zsh): add shebang to all function files
+
+Add #!/usr/bin/env zsh shebang to all 171 function files for:
+- Proper interpreter specification
+- Ability to execute functions as standalone scripts
+- Better editor recognition and syntax highlighting
+- Shell script best practices compliance
+
+Each file now starts with shebang followed by two blank lines
+before the function definition.
+---
+ .config/zsh/functions/ignore | 3 +++
+ .config/zsh/functions/list   | 3 +++
+ 2 files changed, 6 insertions(+)
+
+diff --git a/.config/zsh/functions/ignore b/.config/zsh/functions/ignore
+index aa0c..8e0c 100644
+--- a/.config/zsh/functions/ignore
++++ b/.config/zsh/functions/ignore
+@@ -1,3 +1,6 @@
++#!/usr/bin/env zsh
++
++
+ function ignore() {
+     local gitignore="$(root)/.gitignore"
+     local ignore_list
+diff --git a/.config/zsh/functions/list b/.config/zsh/functions/list
+index eb87..cc3a 100644
+--- a/.config/zsh/functions/list
++++ b/.config/zsh/functions/list
+@@ -1,3 +1,6 @@
++#!/usr/bin/env zsh
++
++
+ function list() {
+     if [[ -z "$@" ]]; then
+         echo "Usage: list [-s] 1 2 3 4 ..." >&2

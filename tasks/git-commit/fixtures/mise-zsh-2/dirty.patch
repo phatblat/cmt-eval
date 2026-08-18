@@ -1,0 +1,62 @@
+diff --git a/.config/mise/config.toml b/.config/mise/config.toml
+index e3805..41ac 100644
+--- a/.config/mise/config.toml
++++ b/.config/mise/config.toml
+@@ -221,7 +221,7 @@ _.path = [
+   "{{env.HOME}}/Library/Android/sdk/platform-tools",
+   "{{env.HOME}}/Library/Android/sdk/cmdline-tools/latest/bin",
+   "{{env.HOME}}/Library/Android/sdk/emulator",
+-  "{{env.HOME}}/Library/Android/sdk/build-tools/37.0.0",
++  "{{env.HOME}}/Library/Android/sdk/build-tools/36.0.0",
+   "{{env.HOME}}/go/bin",
+ ]
+ 
+diff --git a/.zprofile b/.zprofile
+index afbc2..674f 100644
+--- a/.zprofile
++++ b/.zprofile
+@@ -40,8 +40,11 @@ alias la='ls -la'
+ 
+ 
+ 
+-# Source .zshrc for login shells (ensures functions are autoloaded)
+-if [[ -r "$HOME/.zshrc" ]]; then
++# zsh already auto-sources .zshrc for interactive shells, so sourcing it here
++# as well would apply every PATH export (and every other side effect) twice.
++# Only source it for non-interactive login shells, which still need the
++# autoloaded functions.
++if [[ ! -o interactive && -r "$HOME/.zshrc" ]]; then
+   source "$HOME/.zshrc"
+ fi
+ 
+diff --git a/.zshenv b/.zshenv
+index 4b2f7..b596a 100644
+--- a/.zshenv
++++ b/.zshenv
+@@ -5,6 +5,11 @@ if [ -d ~/.nix-profile/bin ]; then
+   export PATH="$HOME/.nix-profile/bin:$PATH"
+ fi
+ 
++# User-managed binaries, including the mise binary itself. Needed here (rather
++# than only in .zshrc) so `mise activate` can resolve `mise` for every shell
++# type; .zshrc re-appends it to keep it behind Homebrew and mise-managed tools.
++export PATH="$PATH:$HOME/.local/bin"
++
+ export PATH="$PATH:$HOME/.puro/bin" # Added by Puro
+ export PATH="$PATH:$HOME/.puro/shared/pub_cache/bin" # Added by Puro
+ export PATH="$PATH:$HOME/.puro/envs/default/flutter/bin" # Added by Puro
+diff --git a/.zshrc b/.zshrc
+index ed807..a802c 100644
+--- a/.zshrc
++++ b/.zshrc
+@@ -104,7 +104,9 @@ export PATH="$HOME/.git-ai/bin:$PATH"
+ export PATH="$HOME/.antigravity-ide/antigravity-ide/bin:$PATH"
+ 
+ # Initialize mise - version manager for tools
+-# NOTE: must be after other PATH modifications so mise paths take precedence
++# NOTE: must be after other PATH modifications so mise paths take precedence.
++# The `mise` binary itself resolves because .zshenv puts ~/.local/bin on PATH;
++# the append further below re-adds it behind Homebrew and mise-managed tools.
+ eval "$(mise activate zsh)"
+ 
+ # Preferred editor: zed locally, nvim over SSH

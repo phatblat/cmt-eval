@@ -1,0 +1,126 @@
+From 381d891ab28abeef57bb617fb73afc415747c051 Mon Sep 17 00:00:00 2001
+From: Ben Chatelain <ben@octop.ad>
+Date: Sat, 18 Oct 2025 17:29:39 -0600
+Subject: [PATCH 1/8] feat(claude): block git push via PreToolUse hook
+
+Replace deny list approach with PreToolUse hook to effectively block
+git push commands. The hook checks if the command starts with 'git push'
+and blocks it with a message requiring explicit user approval.
+
+This approach is more reliable than the deny list since the broader
+'Bash(git:*)' allow pattern was overriding the specific deny rule.
+---
+ justfile | 104 +++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 104 insertions(+)
+ create mode 100644 justfile
+
+diff --git a/justfile b/justfile
+new file mode 100644
+index 0000..8c73
+--- /dev/null
++++ b/justfile
+@@ -0,0 +1,104 @@
++#
++# justfile for ~phatblat
++#
++# export - Export all variables as environment variables.
++
++set export := true
++
++# ignore-comments - Ignore comments when formatting.
++
++set ignore-comments := true
++
++# script-interpreter - Command used to invoke recipes with empty [script] attribute.
++
++set script-interpreter := ['bash', '-eu']
++set quiet := true
++
++# unstable - Enable unstable features. Required for --fmt.
++
++set unstable := true
++
++#
++# variables
++#
++# ANSI colors for formatting output
++
++color_gray := '\e[90m'
++color_green := '\e[32m'
++color_red := '\e[31m'
++color_reset := '\e[0m'
++
++#
++# aliass
++#
++
++alias fmt := format
++alias ls := list
++alias od := outdated
++alias ub := usage-board
++alias up := upgrade
++
++#
++# info group recipes
++#
++
++# Default recipe, lists available recipes
++[script]
++_default:
++    just --list
++
++# Lists installed tools managed by mise
++[group('info')]
++list:
++    mise list --global
++
++# Lists available upgrades
++[group('info')]
++outdated:
++    mise outdated --bump
++
++# Show Claude usage statistics
++[group('info')]
++usage:
++    ccusage
++
++# Show Claude usage statistics dashboard
++[group('info')]
++usage-board:
++    ccusage blocks --live
++
++#
++# configuration group recipes
++#
++
++# Installs tools using mise
++[group('configuration')]
++install:
++    mise install
++
++# Upgrades tools using mise
++[group('configuration')]
++upgrade:
++    mise upgrade --bump
++
++# Formats mise config and justfile
++[group('configuration')]
++format:
++    mise fmt
++    just --fmt
++
++# Removes default.store files and *.hprof files from home directory
++[group('configuration')]
++clean:
++    rm -f "$HOME/Library/Application Support/default.store"*
++    rm -f "$HOME"/*.hprof
++
++#
++# checks group recipes
++#
++
++# Checks justfile and ansible playbooks
++[group('checks')]
++lint:
++    mise fmt --check
++    just --fmt --check

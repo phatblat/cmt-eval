@@ -1,0 +1,855 @@
+From 12eba25e7d8b123b52d33341ebfa750604a36767 Mon Sep 17 00:00:00 2001
+From: Ben Chatelain <phatblat@users.noreply.github.com>
+Date: Tue, 11 Aug 2026 10:25:01 -0400
+Subject: [PATCH 1/8] Merge pull request #419 from phatblat/monday
+
+chore: monday 2026-08-10
+---
+ .agents/harness/hooks/safety.py | 190 ++++++++++++
+ .github/workflows/lint.yml      | 106 +++++++
+ tests/agent-harnesses.bats      | 526 ++++++++++++++++++++++++++++++++
+ 3 files changed, 822 insertions(+)
+ create mode 100755 .agents/harness/hooks/safety.py
+ create mode 100644 .github/workflows/lint.yml
+ create mode 100644 tests/agent-harnesses.bats
+
+diff --git a/.agents/harness/hooks/safety.py b/.agents/harness/hooks/safety.py
+new file mode 100755
+index 0000..780e
+--- /dev/null
++++ b/.agents/harness/hooks/safety.py
+@@ -0,0 +1,190 @@
++#!/usr/bin/env python3
++"""Shared safety policy for agent harness adapters.
++
++Copyright: Ben Chatelain. Apache 2.0.
++"""
++
++from __future__ import annotations
++
++from dataclasses import dataclass
++import os
++import re
++import subprocess
++from pathlib import Path
++
++
++@dataclass(frozen=True)
++class GuardDecision:
++    decision: str
++    reason: str = ""
++
++    @property
++    def allowed(self) -> bool:
++        return self.decision in {"allow", "warn"}
++
++
++PRIVILEGE_ESCALATION = re.compile(
++    r"(^|;|&&|\|\||\||\n|\r|\$\(|`)\s*(sudo|su|doas|pkexec)\b",
++    re.IGNORECASE,
++)
++
++DANGEROUS_COMMANDS = (
++    re.compile(
++        r"\brm\s+-(?=[A-Za-z-]*r)(?=[A-Za-z-]*f)[A-Za-z-]*\s+(/|~|\*|\.\.)",
++        re.IGNORECASE,
++    ),
++    re.compile(r">\s*/dev/sd[a-z]?", re.IGNORECASE),
++    re.compile(r"\bmkfs(\.|\s)", re.IGNORECASE),
++    re.compile(r"\bdd\s+if=.*\s+of=/dev/", re.IGNORECASE),
++    re.compile(r"\bchmod\s+(-R\s+)?777\b", re.IGNORECASE),
++    re.compile(r"\bchmod\s+\+s\b", re.IGNORECASE),
++    re.compile(r":\(\)\{.*:\|:&\};", re.IGNORECASE),
++    re.compile(r"\b(curl|wget)\b[^|]*\|\s*(ba)?sh\b", re.IGNORECASE),
++    re.compile(r"\b(truncate|shred)\b", re.IGNORECASE),
++)
++
++OBFUSCATED_EXECUTION = (
++    re.compile(r"\beval\s+.*\$", re.IGNORECASE),
++    re.compile(r"\bbase64\s+-d.*\|\s*(ba)?sh\b", re.IGNORECASE),
++    re.compile(r"\bawk\s+.*system\s*\(", re.IGNORECASE),
++    re.compile(r"\bbash\s+<\(", re.IGNORECASE),
++)
++
++PROTECTED_PATHS = re.compile(
++    r"("
++    r"\.env($|\.)|"
++    r"\.ssh/|"
++    r"id_(rsa|ed25519|ecdsa)|"
++    r"\.pem$|\.key$|\.p12$|\.pfx$|\.jks$|"
++    r"\.aws/credentials|"
++    r"\.docker/config\.json|"
++    r"kubeconfig|"
++    r"\.npmrc$|\.pypirc$|\.netrc$|\.pgpass$|\.htpasswd$|\.git-credentials|"
++    r"\.claude/\.credentials\.json|"
++    r"\.codex/auth\.json|"
++    r"\.omp/agent/agent\.db|"
++    r"\.omp/agent/secrets\.yml|"
++    r"\.pi/agent/auth\.json|"
++    r"\.gemini/google_accounts\.json|"
++    r"\.gemini/oauth_creds\.json|"
++    r"\.gemini/antigravity-cli/installation_id|"
++    r"\.gemini/antigravity-cli/conversations/|"
++    r"\.cursor/ai-tracking/"
++    r")",
++    re.IGNORECASE,
++)
++
++SECRET_CONTENT = re.compile(
++    r"("
++    r"AKIA[0-9A-Z]{16}|"
++    r"sk-[A-Za-z0-9_-]{20,}|"
++    r"ghp_[A-Za-z0-9]{36}|"
++    r"gho_[A-Za-z0-9]{36}|"
++    r"glpat-[A-Za-z0-9_-]{20,}|"
++    r"xox[bpoas]-[A-Za-z0-9-]+|"
++    r"-----BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----|"
++    r"password\s*[:=]\s*[\"'][^\"']{8,}[\"']"
++    r")",
++    re.IGNORECASE,
++)
++
++
++def evaluate(
++    tool: str,
++    *,
++    command: str = "",
++    path: str = "",
++    content: str = "",
++    cwd: str | None = None,
++) -> GuardDecision:
++    """Evaluate a normalized tool call against the shared safety policy."""
++
++    normalized_tool = tool.lower().strip()
++    if normalized_tool in {"bash", "shell", "exec"}:
++        return evaluate_command(command, cwd=cwd)
++    if normalized_tool in {"write", "edit", "file_write", "file_edit"}:
++        return evaluate_write(path=path, content=content)
++    return GuardDecision("allow")
++
++
++def evaluate_command(command: str, *, cwd: str | None = None) -> GuardDecision:
++    if not command.strip():
++        return GuardDecision("allow")
++
++    if PRIVILEGE_ESCALATION.search(command):
++        return GuardDecision("deny", "Privilege escalation blocked")
++
++    if any(pattern.search(command) for pattern in DANGEROUS_COMMANDS):
++        return GuardDecision("deny", "Dangerous command pattern detected")
++
++    if any(pattern.search(command) for pattern in OBFUSCATED_EXECUTION):
++        return GuardDecision("deny", "Obfuscated execution pattern detected")
++
++    warning = main_branch_commit_warning(command, cwd=cwd)
++    if warning:
++        return GuardDecision("warn", warning)
++
++    return GuardDecision("allow")
++
++
++def evaluate_write(*, path: str = "", content: str = "") -> GuardDecision:
++    if path:
++        display_path = normalize_path_for_matching(path)
++        if PROTECTED_PATHS.search(display_path):
++            return GuardDecision("deny", f"protected file blocked: {path}")
++
++    if content and SECRET_CONTENT.search(content):
++        return GuardDecision("deny", "secret-like content detected")
++
++    return GuardDecision("allow")
++
++
++def normalize_path_for_matching(path: str) -> str:
++    expanded = os.path.expanduser(path)
++    try:
++        return str(Path(expanded).resolve())
++    except OSError:
++        return expanded
++
++
++def main_branch_commit_warning(command: str, *, cwd: str | None = None) -> str:
++    if not re.search(r"^\s*(git\s+commit|git\s+-C\s+\S+\s+commit)\b", command):
++        return ""
++
++    workdir = cwd or os.getcwd()
++    branch = run_git(["branch", "--show-current"], cwd=workdir)
++    if branch not in {"main", "master"}:
++        return ""
++
++    repo_root = run_git(["rev-parse", "--show-toplevel"], cwd=workdir)
++    commit_count = run_git(["rev-list", "--count", "HEAD"], cwd=workdir)
++    home = str(Path.home())
++    try:
++        commits = int(commit_count)
++    except ValueError:
++        commits = 0
++
++    if repo_root != home and commits >= 100:
++        return (
++            f"WARNING: You are on the protected '{branch}' branch. "
++            "Create a feature branch before committing."
++        )
++    return ""
++
++
++def run_git(args: list[str], *, cwd: str) -> str:
++    try:
++        result = subprocess.run(
++            ["git", *args],
++            cwd=cwd,
++            check=False,
++            stdout=subprocess.PIPE,
++            stderr=subprocess.DEVNULL,
++            text=True,
++            timeout=2,
++        )
++    except (OSError, subprocess.TimeoutExpired):
++        return ""
++    if result.returncode != 0:
++        return ""
++    return result.stdout.strip()
+diff --git a/.github/workflows/lint.yml b/.github/workflows/lint.yml
+new file mode 100644
+index 0000..9d1d
+--- /dev/null
++++ b/.github/workflows/lint.yml
+@@ -0,0 +1,106 @@
++name: lint
++
++on:
++  push:
++    branches: [main]
++    paths:
++      - ".config/fish/**"
++      - ".config/home-manager/**"
++      - ".config/nushell/**"
++      - ".config/zsh/functions/**"
++      - ".config/mise/config.toml"
++      - ".gitignore"
++      - "bin/**"
++      - "justfile"
++      - "scripts/**"
++      - "tests/**"
++      - ".github/workflows/lint.yml"
++  pull_request:
++    paths:
++      - ".config/fish/**"
++      - ".config/home-manager/**"
++      - ".config/nushell/**"
++      - ".config/zsh/functions/**"
++      - ".config/mise/config.toml"
++      - ".gitignore"
++      - "bin/**"
++      - "justfile"
++      - "scripts/**"
++      - "tests/**"
++      - ".github/workflows/lint.yml"
++  schedule:
++    # Weekly Monday 06:00 UTC — catch drift from tool updates
++    - cron: "0 6 * * 1"
++
++permissions:
++  contents: read
++
++jobs:
++  lint:
++    runs-on: ubuntu-latest
++    env:
++      # Repo root IS the home directory; remap HOME so ~ resolves to checkout
++      HOME: ${{ github.workspace }}
++      MISE_PIN: "1"
++      # Allowlist only tools needed for linting to prevent mise from attempting
++      # to install macOS-only tools (tart, cargo-based tools, etc.) on Linux CI.
++      MISE_ENABLE_TOOLS: "just,shellcheck,ruff,bats,github:nushell/nushell,python,pipx:yamllint"
++    steps:
++      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
++
++      # Let the action run the install: it only caches tools it installed
++      # itself, so `install: false` plus a separate `mise install` step meant
++      # the cache was never written. install_args keeps the tool set scoped.
++      - name: Install mise and tools
++        uses: jdx/mise-action@7e36c90d9ab29c415a2384db3006f3ec8a8cc654 # v4.2.4
++        with:
++          install_args: "just shellcheck ruff bats github:nushell/nushell python pipx:yamllint"
++
++      - name: Install fish and zsh
++        run: |
++          # Runner-provided Microsoft repositories intermittently return 403.
++          sudo rm -f /etc/apt/sources.list.d/azure-cli.list /etc/apt/sources.list.d/microsoft-prod.list
++          sudo apt-get update && sudo apt-get install -y fish zsh
++
++      - name: Lint
++        run: |
++          eval "$(mise activate bash)"
++          just lint
++
++      - name: Validate nix flake
++        run: nix flake show --json "$HOME/.config/home-manager" 2>&1 | head -20
++        continue-on-error: true
++
++  test:
++    runs-on: macos-latest
++    timeout-minutes: 30
++    env:
++      # Repo root IS the home directory; remap HOME so ~ resolves to checkout
++      HOME: ${{ github.workspace }}
++      MISE_PIN: "1"
++      # Under the remapped HOME the repo's .gitconfig becomes the global git
++      # config, and its commit.gpgsign points at an SSH key that only exists
++      # on real machines — override so test fixture commits don't fail
++      GIT_CONFIG_COUNT: "1"
++      GIT_CONFIG_KEY_0: commit.gpgsign
++      GIT_CONFIG_VALUE_0: "false"
++    steps:
++      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
++
++      - name: Install mise and tools
++        uses: jdx/mise-action@7e36c90d9ab29c415a2384db3006f3ec8a8cc654 # v4.2.4
++        with:
++          install_args: "just shellcheck ruff bats bat starship aqua:shenwei356/rush github:nushell/nushell"
++
++      - name: Install fish and test-exercised tools
++        run: brew install fish diff-so-fancy git-subrepo
++
++      - name: Generate SSH key for sshkey tests
++        run: |
++          mkdir -p "$HOME/.ssh"
++          ssh-keygen -q -t ed25519 -N "" -f "$HOME/.ssh/id_ed25519"
++
++      - name: Test
++        run: |
++          eval "$(mise activate bash)"
++          just test
+diff --git a/tests/agent-harnesses.bats b/tests/agent-harnesses.bats
+new file mode 100644
+index 0000..ff61
+--- /dev/null
++++ b/tests/agent-harnesses.bats
+@@ -0,0 +1,526 @@
++#!/usr/bin/env bats
++# agent-harnesses.bats - Shared agent harness parity checks
++
++load helpers/setup
++
++SCRIPT="$HOME/scripts/agent-harnesses.py"
++
++@test "agent-harnesses: plugin normalizers pass unit tests" {
++  run python3 "$HOME/tests/test_agent_plugins.py"
++
++  [ "$status" -eq 0 ]
++}
++
++@test "agent-harnesses: inventories active commands, agents, and skills without a graph capability" {
++  run python3 "$SCRIPT" inventory --json
++
++  [ "$status" -eq 0 ]
++  command_count=$(printf '%s' "$output" | jq '.commands | length')
++  agent_count=$(printf '%s' "$output" | jq '.agents | length')
++  skill_count=$(printf '%s' "$output" | jq '.skills.count')
++  has_graph=$(printf '%s' "$output" | jq -r '.capabilities | index("code-review-graph") != null')
++  claude_plugins=$(printf '%s' "$output" | jq '.plugins.claude | type')
++  codex_plugins=$(printf '%s' "$output" | jq '.plugins.codex | type')
++
++  [ "$command_count" -eq 24 ]
++  [ "$agent_count" -eq 6 ]
++  [ "$skill_count" -gt 0 ]
++  [ "$has_graph" = "false" ]
++  [ "$claude_plugins" = '"array"' ]
++  [ "$codex_plugins" = '"array"' ]
++}
++
++@test "agent harnesses do not inject session-start context" {
++  ! jq -e '[.hooks.SessionStart[]?.hooks[]?.command | test("session-start\\.sh")] | any' \
++    "$HOME/.codex/hooks.json"
++  ! jq -e '[.hooks.SessionStart[]?.hooks[]?.command | test("session-start\\.sh")] | any' \
++    "$HOME/.claude/settings.json"
++}
++
++@test "agent-harnesses: Linear CLI workflows preserve macOS keychain access" {
++  linear_workflows=(
++    "$HOME/.agents/skills/linear-plan/SKILL.md"
++    "$HOME/.agents/skills/work-eod/SKILL.md"
++    "$HOME/.agents/skills/work-start/SKILL.md"
++    "$HOME/.agents/skills/work-track/SKILL.md"
++    "$HOME/.claude/commands/linear/plan.md"
++    "$HOME/.claude/commands/linear/progress.md"
++    "$HOME/.claude/commands/work/eod.md"
++    "$HOME/.claude/commands/work/start-day.md"
++    "$HOME/.claude/commands/work/track-item.md"
++  )
++
++  for workflow in "${linear_workflows[@]}"; do
++    grep -Fq 'run every `linear ...` command outside the sandbox' "$workflow"
++    grep -Fq 'prefix_rule: ["linear"]' "$workflow"
++    grep -Fq 'No keyring entry' "$workflow"
++    grep -Fq 'No API key configured' "$workflow"
++    grep -Fq 'before asking the user to authenticate' "$workflow"
++    grep -Fq 'Never print, log, or expose' "$workflow"
++  done
++}
++
++@test "agent-harnesses: generated artifacts are current" {
++  run python3 "$SCRIPT" generate --check
++
++  [ "$status" -eq 0 ]
++}
++
++@test "agent-harnesses: commit guidance favors targeted checks" {
++  commit_workflows=(
++    "$HOME/.claude/commands/git/commit.md"
++    "$HOME/.agents/harness/commands/git/commit.md"
++    "$HOME/.agents/skills/git-commit/SKILL.md"
++  )
++
++  for workflow in "${commit_workflows[@]}"; do
++    grep -Fq "Run the project's lint command and only tests directly relevant to changed files" "$workflow"
++    grep -Fq "Run a repository-wide test suite only when the user explicitly requests it" "$workflow"
++    ! grep -Fq "Run tests and lint commands to ensure code quality" "$workflow"
++  done
++
++  grep -Fq 'Run `just lint` and only the Bats files relevant to the changed behavior' "$HOME/AGENTS.md"
++  ! grep -Fq 'Run locally with `just test`' "$HOME/AGENTS.md"
++  ! grep -Fq 'just lint && just test' "$HOME/AGENTS.md"
++}
++
++@test "agent-harnesses: generation removes obsolete skill wrappers" {
++  stale_skill="obsolete-generated-skill"
++  antigravity_dir="$HOME/.agents/harness/adapters/antigravity/skills/$stale_skill"
++  cursor_dir="$HOME/.agents/harness/adapters/cursor/skills/$stale_skill"
++  modified_skill="modified-generated-skill"
++  modified_dir="$HOME/.agents/harness/adapters/antigravity/skills/$modified_skill"
++  symlink_skill="symlink-generated-skill"
++  symlink_dir="$HOME/.agents/harness/adapters/antigravity/skills/$symlink_skill"
++  symlink_target="$BATS_TEST_TMPDIR/$symlink_skill"
++
++  mkdir -p "$antigravity_dir" "$cursor_dir" "$modified_dir" "$symlink_target"
++  sed "s|boris|$stale_skill|g" \
++    "$HOME/.agents/harness/adapters/antigravity/skills/boris/SKILL.md" \
++    >"$antigravity_dir/SKILL.md"
++  sed "s|boris|$stale_skill|g" \
++    "$HOME/.agents/harness/adapters/cursor/skills/boris/SKILL.md" \
++    >"$cursor_dir/SKILL.md"
++  printf '%s\n' "preserve this sidecar" >"$cursor_dir/notes.md"
++  sed "s|boris|$modified_skill|g" \
++    "$HOME/.agents/harness/adapters/antigravity/skills/boris/SKILL.md" \
++    >"$modified_dir/SKILL.md"
++  printf '%s\n' "<!-- manually modified -->" >>"$modified_dir/SKILL.md"
++  sed "s|boris|$symlink_skill|g" \
++    "$HOME/.agents/harness/adapters/antigravity/skills/boris/SKILL.md" \
++    >"$symlink_target/SKILL.md"
++  ln -s "$symlink_target" "$symlink_dir"
++
++  antigravity_hash="$(shasum -a 256 "$antigravity_dir/SKILL.md")"
++  cursor_hash="$(shasum -a 256 "$cursor_dir/SKILL.md")"
++
++  run python3 "$SCRIPT" generate --check
++  check_status="$status"
++  check_output="$output"
++  antigravity_hash_after_check="$(shasum -a 256 "$antigravity_dir/SKILL.md")"
++  cursor_hash_after_check="$(shasum -a 256 "$cursor_dir/SKILL.md")"
++
++  run python3 "$SCRIPT" generate
++  generate_status="$status"
++  antigravity_exists="$([ -e "$antigravity_dir" ] && echo true || echo false)"
++  cursor_skill_exists="$([ -e "$cursor_dir/SKILL.md" ] && echo true || echo false)"
++  cursor_sidecar_exists="$([ -e "$cursor_dir/notes.md" ] && echo true || echo false)"
++  modified_exists="$([ -e "$modified_dir/SKILL.md" ] && echo true || echo false)"
++  symlink_exists="$([ -L "$symlink_dir" ] && echo true || echo false)"
++  symlink_target_exists="$([ -e "$symlink_target/SKILL.md" ] && echo true || echo false)"
++
++  run python3 "$SCRIPT" generate
++  second_generate_status="$status"
++  run python3 "$SCRIPT" generate --check
++  idempotent_check_status="$status"
++
++  rm -f \
++    "$cursor_dir/SKILL.md" \
++    "$cursor_dir/notes.md" \
++    "$modified_dir/SKILL.md" \
++    "$symlink_dir"
++  rmdir "$cursor_dir" "$modified_dir" 2>/dev/null || true
++
++  [ "$check_status" -eq 1 ]
++  [[ "$check_output" == *"obsolete: ~/.agents/harness/adapters/antigravity/skills/$stale_skill/SKILL.md"* ]]
++  [[ "$check_output" == *"obsolete: ~/.agents/harness/adapters/cursor/skills/$stale_skill/SKILL.md"* ]]
++  [[ "$check_output" != *"$modified_skill"* ]]
++  [[ "$check_output" != *"$symlink_skill"* ]]
++  [ "$antigravity_hash_after_check" = "$antigravity_hash" ]
++  [ "$cursor_hash_after_check" = "$cursor_hash" ]
++  [ "$generate_status" -eq 0 ]
++  [ "$antigravity_exists" = false ]
++  [ "$cursor_skill_exists" = false ]
++  [ "$cursor_sidecar_exists" = true ]
++  [ "$modified_exists" = true ]
++  [ "$symlink_exists" = true ]
++  [ "$symlink_target_exists" = true ]
++  [ "$second_generate_status" -eq 0 ]
++  [ "$idempotent_check_status" -eq 0 ]
++}
++
++@test "agent-harnesses: generated manifest contains native plugin matrix" {
++  run python3 "$SCRIPT" generate --check
++  [ "$status" -eq 0 ]
++
++  jq -e '.plugins.claude and .plugins.codex' \
++    "$HOME/docs/agent-harnesses.json" >/dev/null
++  grep -Fq '## Native Plugins' "$HOME/docs/agent-harnesses.md"
++  grep -Fq '| Plugin | Claude | Codex |' "$HOME/docs/agent-harnesses.md"
++  grep -Fq '| pup@datadog-pup | enabled | enabled |' \
++    "$HOME/docs/agent-harnesses.md"
++}
++
++@test "agent-harnesses: audit reports observed plugins and drift" {
++  run python3 "$SCRIPT" audit --json
++
++  [ "$status" -eq 0 ]
++  [ "$(printf '%s' "$output" | jq '.plugins.observed | type')" = '"object"' ]
++  [ "$(printf '%s' "$output" | jq '.plugins.drift | type')" = '"array"' ]
++}
++
++@test "agent-harnesses: pr-daily layers new branches on the current daily branch" {
++  for workflow in \
++    "$HOME/.claude/commands/pr/daily.md" \
++    "$HOME/.agents/skills/pr-daily/SKILL.md"; do
++    grep -Fq 'source_branch=${current_branch}' "$workflow"
++    grep -Fq 'git checkout -b "${today}" "${source_branch}"' "$workflow"
++    grep -Fq 'comparison_branch=${default_branch}' "$workflow"
++    grep -Fq 'if [ "${source_branch}" != "${today}" ]; then' "$workflow"
++    grep -Fq 'comparison_branch=${source_branch}' "$workflow"
++    grep -Fq 'git rev-list --count "${comparison_branch}..${today}"' "$workflow"
++    grep -Fq 'git commit --allow-empty -m "chore: start ${today} ${today_date}"' "$workflow"
++    grep -Fq 'gh pr create --draft --base "${default_branch}"' "$workflow"
++    ! grep -Eq 'git checkout "?\$\{default_branch\}"?' "$workflow"
++
++    default_comparison_line="$(grep -nF 'comparison_branch=${default_branch}' "$workflow" | head -1 | cut -d: -f1)"
++    source_guard_line="$(grep -nF 'if [ "${source_branch}" != "${today}" ]; then' "$workflow" | head -1 | cut -d: -f1)"
++    source_comparison_line="$(grep -nF 'comparison_branch=${source_branch}' "$workflow" | head -1 | cut -d: -f1)"
++    rev_list_line="$(grep -nF 'git rev-list --count "${comparison_branch}..${today}"' "$workflow" | head -1 | cut -d: -f1)"
++    marker_commit_line="$(grep -nF 'git commit --allow-empty -m "chore: start ${today} ${today_date}"' "$workflow" | head -1 | cut -d: -f1)"
++    [ "$default_comparison_line" -lt "$source_guard_line" ]
++    [ "$source_guard_line" -lt "$source_comparison_line" ]
++    [ "$source_comparison_line" -lt "$rev_list_line" ]
++    [ "$rev_list_line" -lt "$marker_commit_line" ]
++
++    grep -Eiq 'skip(ping)? .*source.*\$\{source_branch\}|skip(ping)?.*\$\{source_branch\}.*source' "$workflow"
++    grep -Eiq 'any other branch.*ask whether to use.*or abort' "$workflow"
++    grep -Eiq 'diverg(ed|ence).*ask how to proceed' "$workflow"
++    grep -Eiq 'status[^[:alnum:]]*0.*(fetch|fast-forward|sync)' "$workflow"
++    grep -Eiq 'status[^[:alnum:]]*2.*(absent|missing|not found|does not exist|local)' "$workflow"
++    grep -Eiq '((any|all) other|other non-?zero).*status.*(stop|abort|report)|status.*(other|otherwise).*(stop|abort|report)' "$workflow"
++    grep -Fq 'git merge --ff-only "${remote}/${source_branch}"' "$workflow"
++  done
++}
++
++@test "agent-harnesses: procedural Codex skills require explicit invocation" {
++  procedural_skills=(
++    branch-finish
++    dupe
++    git-cleanup
++    git-commit
++    git-push
++    git-rebase
++    git-split
++    git-status
++    git-worktrees
++    gh-stack
++    gha-checks
++    handoff
++    gha-log-reader
++    linear-plan
++    optimize
++    pr-create
++    pr-daily
++    pr-merge
++    pr-open-for-review
++    pr-post-findings
++    pr-resolve-feedback
++    pr-update-desc
++    resolve-feedback
++    retro
++    session-save
++    work-eod
++    work-runners
++    work-start
++    work-track
++  )
++
++  for skill in "${procedural_skills[@]}"; do
++    sidecar="$HOME/.agents/skills/$skill/agents/openai.yaml"
++    [ -f "$sidecar" ]
++    grep -Fx "policy:" "$sidecar"
++    grep -Fx "  allow_implicit_invocation: false" "$sidecar"
++  done
++}
++
++@test "handoff skill records a complete, manual-only continuation brief" {
++  skill="$HOME/.agents/skills/handoff/SKILL.md"
++  sidecar="$HOME/.agents/skills/handoff/agents/openai.yaml"
++
++  grep -Fq 'Do **not** ask the user clarifying questions.' "$skill"
++  grep -Fq 'docs/handoffs/YYYY-MM-DD-<topic>.md' "$skill"
++  grep -Fq '## Open Questions' "$skill"
++  grep -Fq '## Confidence' "$skill"
++  grep -Fq '## Estimate' "$skill"
++  grep -Fq '## Suggested Agent Structure' "$skill"
++  grep -Fq 'git add -- "docs/handoffs/YYYY-MM-DD-<topic>.md"' "$skill"
++  grep -Fx '  allow_implicit_invocation: false' "$sidecar"
++}
++
++@test "handoff skill has generated native adapters" {
++  run python3 "$SCRIPT" generate --check
++  [ "$status" -eq 0 ]
++
++  for skill in \
++    "$HOME/.claude/skills/handoff/SKILL.md" \
++    "$HOME/.codex/skills/handoff/SKILL.md" \
++    "$HOME/.config/opencode/skills/handoff/SKILL.md"; do
++    [ -f "$skill" ]
++    grep -Fq 'Load and follow the shared skill at `~/.agents/skills/handoff/SKILL.md`.' "$skill"
++  done
++
++  grep -Fx 'disable-model-invocation: true' "$HOME/.claude/skills/handoff/SKILL.md"
++  grep -Fx '  allow_implicit_invocation: false' \
++    "$HOME/.codex/skills/handoff/agents/openai.yaml"
++}
++
++@test "aven skill has generated ability adapters" {
++  run python3 "$SCRIPT" generate --check
++  [ "$status" -eq 0 ]
++
++  canonical="$HOME/.agents/skills/aven/SKILL.md"
++  [ -f "$canonical" ]
++  grep -Fq "name: aven" "$canonical"
++  grep -Fq "Use aven to find tasks" "$canonical"
++
++  for skill in \
++    "$HOME/.claude/skills/aven/SKILL.md" \
++    "$HOME/.codex/skills/aven/SKILL.md" \
++    "$HOME/.config/opencode/skills/aven/SKILL.md"; do
++    [ -f "$skill" ]
++    grep -Fq 'Load and follow the shared skill at `~/.agents/skills/aven/SKILL.md`.' "$skill"
++  done
++
++  ! grep -Fq "disable-model-invocation: true" \
++    "$HOME/.claude/skills/aven/SKILL.md"
++  [ ! -e "$HOME/.codex/skills/aven/agents/openai.yaml" ]
++
++  for skill in \
++    "$HOME/.agents/harness/adapters/antigravity/skills/aven/SKILL.md" \
++    "$HOME/.agents/harness/adapters/cursor/skills/aven/SKILL.md"; do
++    [ -f "$skill" ]
++    grep -Fq 'Load and follow the shared skill at `~/.agents/skills/aven/SKILL.md`.' "$skill"
++  done
++}
++
++@test "aven native adapters are tracked" {
++  run git -C "$HOME" ls-files --error-unmatch .codex/skills/aven/SKILL.md
++  [ "$status" -eq 0 ]
++
++  run git -C "$HOME" ls-files --error-unmatch .config/opencode/skills/aven/SKILL.md
++  [ "$status" -eq 0 ]
++}
++
++@test "agent-harnesses: Claude and Codex know Obsidian daily-note location" {
++  for instructions in "$HOME/.claude/CLAUDE.md" "$HOME/.codex/AGENTS.md"; do
++    [ -f "$instructions" ]
++    grep -F "Obsidian" "$instructions"
++    grep -F "~/2ndBrain/daily-notes/<YYYY>/<YYYY-MM-DD dddd>.md" "$instructions"
++    grep -F "Only use Notion when explicitly requested" "$instructions"
++  done
++}
++
++@test "agent-harnesses: pr-post-findings preserves the Obsidian worklog contract" {
++  claude_workflow="$HOME/.claude/commands/pr/post-findings.md"
++  codex_workflow="$HOME/.agents/skills/pr-post-findings/SKILL.md"
++
++  for workflow in "$claude_workflow" "$codex_workflow"; do
++    grep -Fq 'so the worklog captures which PRs you reviewed and every comment you left' "$workflow"
++    grep -Fq 'note_path="$HOME/2ndBrain/daily-notes/${today_year}/${today_date} ${today_day}.md"' "$workflow"
++    grep -Fq '<!-- pr:post-findings appends reviewed PRs here -->' "$workflow"
++    grep -Fq 'PR already listed' "$workflow"
++    grep -Fq 'PR not listed' "$workflow"
++  done
++
++  grep -Fq 'Make the daily-note update before reporting success.' "$codex_workflow"
++  grep -Fq 'Verify that every captured `comment_url` appears in the updated entry.' "$codex_workflow"
++}
++
++@test "agent-harnesses: cursor plugin artifacts exist" {
++  [ -f "$HOME/.agents/harness/adapters/cursor/.cursor-plugin/plugin.json" ]
++  [ -f "$HOME/.agents/harness/adapters/cursor/rules/shared-harness.mdc" ]
++  [ -f "$HOME/.agents/harness/adapters/cursor/commands/git/commit.md" ]
++  [ -f "$HOME/.agents/harness/adapters/cursor/agents/triage-expert.md" ]
++  [ -f "$HOME/.agents/harness/adapters/cursor/hooks/hooks.json" ]
++  [ -f "$HOME/.agents/harness/adapters/cursor/mcp.json" ]
++}
++
++@test "agent-harnesses: cursor plugin JSON files parse" {
++  run jq . "$HOME/.agents/harness/adapters/cursor/.cursor-plugin/plugin.json"
++  [ "$status" -eq 0 ]
++
++  run jq . "$HOME/.agents/harness/adapters/cursor/hooks/hooks.json"
++  [ "$status" -eq 0 ]
++
++  run jq . "$HOME/.agents/harness/adapters/cursor/mcp.json"
++  [ "$status" -eq 0 ]
++}
++
++@test "agent-harnesses: antigravity plugin artifacts exist and parse" {
++  run python3 "$SCRIPT" generate --check
++  [ "$status" -eq 0 ]
++
++  adapter="$HOME/.agents/harness/adapters/antigravity"
++  [ -f "$adapter/plugin.json" ]
++  [ -f "$adapter/commands/git/commit.md" ]
++  [ -f "$adapter/agents/triage-expert.md" ]
++  [ -f "$adapter/hooks/hooks.json" ]
++  [ -f "$adapter/scripts/harness-guard.py" ]
++  [ -f "$adapter/mcp.json" ]
++
++  command_count=$(find "$adapter/commands" -type f -name '*.md' | wc -l | tr -d ' ')
++  agent_count=$(find "$adapter/agents" -type f -name '*.md' | wc -l | tr -d ' ')
++  skill_count=$(find "$adapter/skills" -type f -name 'SKILL.md' | wc -l | tr -d ' ')
++  inventory_skill_count=$(python3 "$SCRIPT" inventory --json | jq '.skills.count')
++
++  [ "$command_count" -eq 24 ]
++  [ "$agent_count" -eq 6 ]
++  [ "$skill_count" -eq "$inventory_skill_count" ]
++
++  jq . "$adapter/plugin.json" >/dev/null
++  jq . "$adapter/hooks/hooks.json" >/dev/null
++  jq . "$adapter/mcp.json" >/dev/null
++}
++
++@test "agent-harnesses: antigravity plugin validates when agy is installed" {
++  command -v agy >/dev/null 2>&1 || skip "agy not installed"
++
++  run agy plugin validate "$HOME/.agents/harness/adapters/antigravity"
++
++  [ "$status" -eq 0 ]
++}
++
++@test "agent-harnesses: safe shell commands pass every adapter guard" {
++  for harness in claude codex opencode pi omp antigravity cursor; do
++    run python3 "$SCRIPT" guard --harness "$harness" --tool bash --command "git status --short"
++    [ "$status" -eq 0 ]
++    decision=$(printf '%s' "$output" | jq -r '.decision')
++    [ "$decision" = "allow" ]
++  done
++}
++
++@test "agent-harnesses: dangerous shell commands are denied consistently" {
++  for harness in claude codex opencode pi omp antigravity cursor; do
++    run python3 "$SCRIPT" guard --harness "$harness" --tool bash --command "rm -rf /"
++    [ "$status" -eq 2 ]
++    decision=$(printf '%s' "$output" | jq -r '.decision')
++    reason=$(printf '%s' "$output" | jq -r '.reason')
++    [ "$decision" = "deny" ]
++    [[ "$reason" == *"Dangerous command"* ]]
++  done
++}
++
++@test "agent-harnesses: privilege escalation after shell separators is denied consistently" {
++  privileged_commands=(
++    "echo x | sudo tee /etc/hosts"
++    "printf x | su - root"
++    $'echo ok\nsudo whoami'
++  )
++
++  for harness in claude codex opencode pi omp antigravity cursor; do
++    for privileged_command in "${privileged_commands[@]}"; do
++      run python3 "$SCRIPT" guard --harness "$harness" --tool bash --command "$privileged_command"
++      [ "$status" -eq 2 ]
++      decision=$(printf '%s' "$output" | jq -r '.decision')
++      reason=$(printf '%s' "$output" | jq -r '.reason')
++      [ "$decision" = "deny" ]
++      [[ "$reason" == *"Privilege escalation"* ]]
++    done
++  done
++}
++
++@test "agent-harnesses: protected writes are denied consistently" {
++  for harness in claude codex opencode pi omp antigravity cursor; do
++    run python3 "$SCRIPT" guard --harness "$harness" --tool write --path "$HOME/.ssh/id_ed25519" --content "not a key"
++    [ "$status" -eq 2 ]
++    decision=$(printf '%s' "$output" | jq -r '.decision')
++    reason=$(printf '%s' "$output" | jq -r '.reason')
++    [ "$decision" = "deny" ]
++    [[ "$reason" == *"protected file"* ]]
++  done
++}
++
++@test "agent-harnesses: documented protected paths are denied consistently" {
++  protected_paths=(
++    "$HOME/.gemini/google_accounts.json"
++    "$HOME/.gemini/oauth_creds.json"
++    "$HOME/.gemini/antigravity-cli/installation_id"
++    "$HOME/.gemini/antigravity-cli/conversations/session.json"
++    "$HOME/.cursor/ai-tracking/state.json"
++  )
++
++  for harness in claude codex opencode pi omp antigravity cursor; do
++    for protected_path in "${protected_paths[@]}"; do
++      run python3 "$SCRIPT" guard --harness "$harness" --tool write --path "$protected_path" --content "{}"
++      [ "$status" -eq 2 ]
++      decision=$(printf '%s' "$output" | jq -r '.decision')
++      reason=$(printf '%s' "$output" | jq -r '.reason')
++      [ "$decision" = "deny" ]
++      [[ "$reason" == *"protected file"* ]]
++    done
++  done
++}
++
++@test "agent-harnesses: secret-like content is denied consistently" {
++  for harness in claude codex opencode pi omp antigravity cursor; do
++    run python3 "$SCRIPT" guard --harness "$harness" --tool write --path "$HOME/tmp/example.txt" --content "token = <redacted-secret-pattern>"
++    [ "$status" -eq 2 ]
++    decision=$(printf '%s' "$output" | jq -r '.decision')
++    reason=$(printf '%s' "$output" | jq -r '.reason')
++    [ "$decision" = "deny" ]
++    [[ "$reason" == *"secret-like content"* ]]
++  done
++}
++
++@test "agent-harnesses: generated guard wrappers forward cwd" {
++  repo="$(mktemp -d)"
++  git -C "$repo" init -q -b main
++  empty_tree="$(git -C "$repo" mktree </dev/null)"
++  parent=""
++  for index in $(seq 1 100); do
++    if [ -n "$parent" ]; then
++      commit="$(
++        GIT_AUTHOR_NAME="Harness Test" \
++          GIT_AUTHOR_EMAIL="harness@example.invalid" \
++          GIT_COMMITTER_NAME="Harness Test" \
++          GIT_COMMITTER_EMAIL="harness@example.invalid" \
++          git -C "$repo" commit-tree "$empty_tree" -p "$parent" -m "commit $index"
++      )"
++    else
++      commit="$(
++        GIT_AUTHOR_NAME="Harness Test" \
++          GIT_AUTHOR_EMAIL="harness@example.invalid" \
++          GIT_COMMITTER_NAME="Harness Test" \
++          GIT_COMMITTER_EMAIL="harness@example.invalid" \
++          git -C "$repo" commit-tree "$empty_tree" -m "commit $index"
++      )"
++    fi
++    parent="$commit"
++  done
++  git -C "$repo" update-ref refs/heads/main "$parent"
++  git -C "$repo" checkout -q main
++
++  payload="$(jq -nc --arg cwd "$repo" '{tool: "bash", command: "git commit -m test", cwd: $cwd}')"
++
++  for wrapper in \
++    "$HOME/.agents/harness/adapters/antigravity/scripts/harness-guard.py" \
++    "$HOME/.agents/harness/adapters/cursor/scripts/harness-guard.py"; do
++    run python3 "$wrapper" <<<"$payload"
++    [ "$status" -eq 0 ]
++    decision="$(printf '%s' "$output" | jq -r '.decision')"
++    reason="$(printf '%s' "$output" | jq -r '.reason')"
++    [ "$decision" = "warn" ]
++    [[ "$reason" == *"protected 'main' branch"* ]]
++  done
++}

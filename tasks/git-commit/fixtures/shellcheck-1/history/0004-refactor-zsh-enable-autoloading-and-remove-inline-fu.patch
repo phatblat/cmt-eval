@@ -1,0 +1,17 @@
+From fe48cd73d6d0ac2c3d6d8fc13d849a7725512a17 Mon Sep 17 00:00:00 2001
+From: Ben Chatelain <ben@octop.ad>
+Date: Sat, 18 Oct 2025 18:06:42 -0600
+Subject: [PATCH 4/8] refactor(zsh): enable autoloading and remove inline
+ functions
+
+Configure fpath to autoload custom functions from ~/.config/zsh/functions/
+and remove all 171 inline function definitions from .zshrc.
+
+Changes:
+- Add fpath configuration with typeset -U for uniqueness
+- Enable autoload -Uz for all functions in functions directory
+- Remove 2,443 lines of function definitions
+- .zshrc reduced from 2,690 to 247 lines (91% reduction)
+
+Functions are now lazy-loaded on first use, improving shell startup
+performance. All functions tested and working correctly via autoload.

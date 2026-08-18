@@ -1,0 +1,39 @@
+From daba98cb71ef94e9605e3b687f9b73a74d9ca992 Mon Sep 17 00:00:00 2001
+From: Ben Chatelain <ben@octop.ad>
+Date: Mon, 2 Mar 2026 11:26:03 -0700
+Subject: [PATCH 5/8] build(gt): add gt-mise-bump-polecat(s) recipes
+
+---
+ justfile | 19 +++++++++++++++++++
+ 1 file changed, 19 insertions(+)
+
+diff --git a/justfile b/justfile
+index f545..4d2c 100644
+--- a/justfile
++++ b/justfile
+@@ -367,6 +367,25 @@ gt-mayor:
+ gt-feed:
+     cd ~/gt && gt feed
+ 
++# Create and sling one polecat per outdated mise tool bump
++[group('gastown')]
++gt-mise-bump-polecats rig='dotfiles':
++    ~/scripts/gt-mise-bump-polecats --all --rig {{ rig }}
++
++# Dry-run preview of all outdated mise tool bump dispatches
++[group('gastown')]
++gt-mise-bump-polecats-dry-run rig='dotfiles':
++    ~/scripts/gt-mise-bump-polecats --all --rig {{ rig }} --dry-run
++
++# Create and sling a single tool bump to one polecat
++[group('gastown')]
++gt-mise-bump-polecat tool current bump rig='dotfiles':
++    ~/scripts/gt-mise-bump-polecats \
++        --tool {{ tool }} \
++        --current {{ current }} \
++        --bump {{ bump }} \
++        --rig {{ rig }}
++
+ #
+ # lm-studio group recipes
+ #

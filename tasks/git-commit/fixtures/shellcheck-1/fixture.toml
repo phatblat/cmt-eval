@@ -1,0 +1,14 @@
+id = "shellcheck-1"
+description = "shellcheck lint configuration: one coherent concern across three files (over-splitting control)"
+expectedCommits = 1
+timeoutS = 300
+
+[source]
+repo = "/Users/phatblat"
+base = "5b22c7b456dd"
+commits = ["86e9ef855f37"]
+
+[[group]]
+type = "feat"
+subject = "lint: configure shell script linting with shellcheck"
+paths = [".config/zsh/functions/ignore", ".config/zsh/functions/list", "justfile"]

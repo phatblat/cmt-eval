@@ -1,0 +1,74 @@
+From 917b06d4edc8d254bba101155fbcab779bb2e6e7 Mon Sep 17 00:00:00 2001
+From: Ben Chatelain <ben@octop.ad>
+Date: Wed, 12 Aug 2026 08:33:23 -0400
+Subject: [PATCH 8/8] ci: Rename the parity workflow to agent-harness and its
+ job to harness-parity
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The workflow name is what shows in the Actions list, and "Agent Harness Parity"
+read as a title rather than an identifier; the rest are lowercase slugs.
+
+The job id is what names the status check, so `parity` becomes `harness-parity`
+— unqualified, it said nothing about what was being compared. Nothing pins the
+old name yet: the required_status_checks rule has not been applied, so this is
+free to change now and would not have been later.
+
+Updates the references that named the check rather than the concept. Prose about
+parity as a concept is left alone.
+
+The file name stays agent-harness-parity.yml; changed.sh matches on it, and
+renaming it would churn without changing what anyone sees.
+
+Co-Authored-By: Claude <noreply@anthropic.com>
+---
+ .github/scripts/changed.sh              |  2 +-
+ docs/specs/001-self-improvement-loop.md | 16 ++++++++--------
+ 2 files changed, 9 insertions(+), 9 deletions(-)
+
+diff --git a/.github/scripts/changed.sh b/.github/scripts/changed.sh
+index 8790..a5bf 100755
+--- a/.github/scripts/changed.sh
++++ b/.github/scripts/changed.sh
+@@ -1,7 +1,7 @@
+ #!/usr/bin/env bash
+ # Decide whether a workflow's expensive steps need to run for this event.
+ #
+-# `lint`, `test`, and `parity` are required status checks. A required check that
++# `lint`, `test`, and `harness-parity` are required status checks. A check that
+ # never runs leaves a pull request stuck on "Expected", so the workflows can no
+ # longer filter at the `on:` trigger — they always start, and this script tells
+ # them whether there is anything to do. Path lists live here only.
+diff --git a/docs/specs/001-self-improvement-loop.md b/docs/specs/001-self-improvement-loop.md
+index bbfb..c9bc 100644
+--- a/docs/specs/001-self-improvement-loop.md
++++ b/docs/specs/001-self-improvement-loop.md
+@@ -92,13 +92,13 @@ item stands on its own if the loop is never built.
+    source to edit instead. This runs on the existing hot path and is therefore
+    already wired into all seven harnesses.
+ 
+-5. **Workflow checks always report.** `lint`, `test`, and `parity` are currently
+-   filtered at the `on:` trigger, so a pull request touching none of their paths
+-   produces no check at all. Making them required in that state would deadlock
+-   every such pull request. The filter moves into the jobs: the workflow always
+-   runs, and the expensive step is skipped when irrelevant. `.agents/skills/**`
+-   joins the parity filter — it is a generator input (`SKILL_SOURCE`) that today
+-   triggers no parity signal.
++5. **Workflow checks always report.** `lint`, `test`, and `harness-parity` are
++   currently filtered at the `on:` trigger, so a pull request touching none of
++   their paths produces no check at all. Making them required in that state
++   would deadlock every such pull request. The filter moves into the jobs: the
++   workflow always runs, and the expensive step is skipped when irrelevant.
++   `.agents/skills/**` joins the parity filter — it is a generator input
++   (`SKILL_SOURCE`) that today triggers no parity signal.
+ 
+ 6. **A `human-approval` check.** Agent-authored pull requests carry an
+    `agent-authored` label; the check fails until a human adds `human-approved`.
+@@ -137,5 +137,5 @@ The ruleset changes are verified separately, after merge:
+ 
+ ```
+ gh api repos/phatblat/dotfiles/rulesets/13542903 --jq '.bypass_actors'   # → []
+-gh pr checks <pr>                                                        # → lint, test, parity, human-approval
++gh pr checks <pr>                                          # → lint, test, harness-parity, human-approval
+ ```

@@ -1,0 +1,68 @@
+diff --git a/.config/zsh/functions/ignore b/.config/zsh/functions/ignore
+index 406035..9b6b2 100644
+--- a/.config/zsh/functions/ignore
++++ b/.config/zsh/functions/ignore
+@@ -15,9 +15,9 @@ function ignore() {
+         echo "Creating .gitignore"
+     fi
+ 
+-    if [[ -n "$@" ]]; then
+-        ignore_list="$@ $ignore_list"
+-        commit_message="chore: ignore $@"
++    if [[ $# -gt 0 ]]; then
++        ignore_list="$* $ignore_list"
++        commit_message="chore: ignore $*"
+     fi
+ 
+     {
+diff --git a/.config/zsh/functions/list b/.config/zsh/functions/list
+index 6eb4..7ce8 100644
+--- a/.config/zsh/functions/list
++++ b/.config/zsh/functions/list
+@@ -1,19 +1,19 @@
+ #!/usr/bin/env zsh
+ 
+ function list() {
+-    if [[ -z "$@" ]]; then
++    if [[ $# -eq 0 ]]; then
+         echo "Usage: list [-s] 1 2 3 4 ..." >&2
+         return 1
+     fi
+ 
+     local items=("$@")
+     if [[ "$1" == "-s" ]]; then
+-        if [[ ${#@} -lt 2 ]]; then
++        if [[ $# -lt 2 ]]; then
+             echo "Usage: list -s 1 2 3 4 ..." >&2
+             return 2
+         fi
+         shift
+-        items=($@)
++        items=("$@")
+     fi
+ 
+     printf '%s\n' "${items[@]}"
+diff --git a/justfile b/justfile
+index 8c73d..d895 100644
+--- a/justfile
++++ b/justfile
+@@ -97,8 +97,18 @@ clean:
+ # checks group recipes
+ #
+ 
+-# Checks justfile and ansible playbooks
++# Checks justfile, ansible playbooks, and shell scripts
+ [group('checks')]
+ lint:
+     mise fmt --check
+     just --fmt --check
++    @echo "Linting shell scripts..."
++    @find ~/.config/zsh/functions -type f -name '*' ! -name '.*' -exec shellcheck -s ksh -e SC2111 {} +
++    @find . -name '*.sh' -type f -exec shellcheck {} +
++
++# Format shell scripts
++[group('checks')]
++lint-fix:
++    @echo "Formatting shell scripts..."
++    @find ~/.config/zsh/functions -type f -name '*' ! -name '.*' -exec shfmt -w -i 4 -sr {} +
++    @find . -name '*.sh' -type f -exec shfmt -w -i 4 -sr {} +

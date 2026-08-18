@@ -1,0 +1,521 @@
+From fdab6479c674541c396b0eb60285bd741da2c1ce Mon Sep 17 00:00:00 2001
+From: Ben Chatelain <ben@octop.ad>
+Date: Sat, 15 Aug 2026 12:13:08 -0400
+Subject: [PATCH 1/8] feat(harness): add grok to the shared agent harness
+
+- Move grok from the Homebrew cask grok-build onto mise
+  (grok = "1.0.4" in .config/mise/config.toml); brew cask uninstalled
+  without --zap to preserve the harness config generated at ~/.grok
+- Register grok in scripts/agent-harnesses.py: HARNESSES,
+  HARNESS_LABELS, ATTRIBUTE_MAPPINGS, and five new renderers
+  (render_grok_config/rules/agent/hooks/guard) wired into render_all,
+  GENERATED_ITEM_ROOTS, command_validate/verify/audit, and every
+  build_manifest feature/parity table
+- Extract COMPACTION_PRESERVATION as a shared constant so grok and omp
+  cannot drift; render_omp_append_system output is byte-identical
+- Give grok its own PreToolUse guard (~/.grok/hooks/harness-guard.json
+  + scripts/harness-guard.py) that maps grok's camelCase hook payload
+  onto the shared guard CLI, with Claude/Cursor native hook compat
+  disabled in the generated config.toml since it can't parse grok's
+  snake_case-free envelope
+- Protect grok credentials (auth.json, mcp_credentials.json) in
+  safety.py PROTECTED_PATHS and the generated safety-policy.json
+- Append a Git Commit Attribution section to the generated grok rules
+  file (Co-Authored-By: grokkybara[bot]) since grok has no native
+  commit_attribution config key like Codex
+- Allowlist .grok/{agents,config.toml,hooks,rules,scripts} in
+  .gitignore and register .grok in audit-ignored-config.py
+  HARNESS_ROOTS
+- Add bats coverage: grok artifacts/parse test, guard wrapper camelCase
+  mapping test, and grok added to every cross-harness guard loop and
+  the documented-protected-paths test
+- Regenerate harness artifacts: README.md, generated-paths.json,
+  safety-policy.json, docs/agent-harnesses.{json,md}
+
+Co-Authored-By: oh-my-pi <omp@can.ac>
+---
+ .config/mise/config.toml | 251 +++++++++++++++++++++++++++++++++++++++
+ .zprofile                |  49 ++++++++
+ .zshenv                  |  12 ++
+ .zshrc                   | 139 ++++++++++++++++++++++
+ 4 files changed, 451 insertions(+)
+ create mode 100644 .config/mise/config.toml
+ create mode 100644 .zprofile
+ create mode 100644 .zshenv
+ create mode 100644 .zshrc
+
+diff --git a/.config/mise/config.toml b/.config/mise/config.toml
+new file mode 100644
+index 0000..a171
+--- /dev/null
++++ b/.config/mise/config.toml
+@@ -0,0 +1,251 @@
++#
++# ~/.config/mise/config.toml
++# https://mise.jdx.dev/configuration.html
++#
++
++# mise-managed tools, ordered alphabetically
++[tools]
++"aqua:anordal/shellharden" = "4.3.2"
++"aqua:cirruslabs/tart" = "2.35.0"
++"aqua:dalance/procs" = "0.14.12"
++"aqua:dlvhdr/gh-dash" = "4.25.2"
++"aqua:openai/codex" = "0.147.0"
++"aqua:shenwei356/rush" = "0.9.0"
++"aqua:tcnksm/ghr" = "0.18.3"
++"aqua:uutils/coreutils" = "0.10.0"
++"cargo:cargo-about" = "0.9.1"
++"cargo:cargo-binstall" = "1.21.1"
++"cargo:cargo-expand" = "1.0.124"
++"cargo:foxguard" = "0.12.0"
++"cargo:https://github.com/nkotval-ditto/wookie" = { version = "rev:8a2eab6de09e7b381e3b83ff0dac7979bc88cf8b", crate = "wookie" }
++"cargo:sccache" = "0.17.0"
++"cargo:tauri-cli" = "2.11.4"
++"cargo:wasm-bindgen-cli" = "0.2.127"
++"cargo:wasm-pack" = "0.15.0"
++"github:can1357/oh-my-pi" = "17.3.4"
++"github:cirruslabs/softnet" = "0.22.1"
++"github:DataDog/pup" = "1.10.8"
++"github:Dicklesworthstone/beads_rust" = "0.2.22"
++"github:diggerhq/opencomputer" = "0.6.0.39"
++"github:dolthub/dolt" = "2.3.0"
++"github:harness/harness-cli" = "1.3.42"
++"github:nushell/nushell" = { version = "0.114.1", version_prefix = "" }
++"github:raine/aven" = "v0.1.29"
++"github:schpet/linear-cli" = "2.5.0"
++"go:golang.org/x/tools/gopls" = "0.23.0"
++"npm:@babel/cli" = "8.0.4"
++"npm:@googleworkspace/cli" = "0.22.5"
++"npm:@openai/codex" = "0.147.0"
++"npm:@sentry/wizard" = "7.0.2"
++"npm:@vtsls/language-server" = "0.3.0"
++"npm:bash-language-server" = "5.6.0"
++"npm:ccusage" = "20.0.19"
++"npm:claudekit" = "0.9.5"
++"npm:ctx7" = "0.5.8"
++"npm:gastown-gui" = "0.9.4"
++"npm:gtop" = "1.1.5"
++"npm:jsonlint" = "1.6.3"
++"npm:markdownlint-cli" = "0.49.1"
++"npm:markdownlint-cli2" = "0.23.2"
++"npm:oh-my-claude-sisyphus" = "4.15.10"
++"npm:pnpm" = "11.21.0"
++"npm:prettier" = "3.9.6"
++"npm:renovate" = "44.29.4"
++"npm:typescript" = "7.0.2"
++"npm:typescript-language-server" = "5.3.0"
++"npm:vscode-langservers-extracted" = "4.10.0"
++"npm:yaml-language-server" = "1.24.0"
++"npm:yarn" = "1.22.22"
++"pipx:graphifyy" = "0.9.42"
++"pipx:pyright" = "1.1.411"
++"pipx:python-lsp-server" = "1.15.0"
++"pipx:token-viewer" = "0.0.7"
++"pipx:yamllint" = "1.38.0"
++"vfox:mise-plugins/vfox-gcloud" = "580.0.0"
++act = "0.2.89"
++actionlint = "1.7.12"
++awscli = { version = "2.36.24", symlink_bins = "true" }
++bat = "0.26.1"
++bats = "1.14.0"
++bazelisk = "1.29.0"
++bottom = "0.14.8"
++buildifier = "8.5.1"
++bun = "1.3.14"
++caddy = "2.11.4"
++cheat = "5.1.0"
++chromedriver = "115.0.5763.0"
++clang-format = "22.1.8"
++cmake = "4.4.2"
++cocoapods = { version = "1.17.0", install_env = { PATH = "/Users/phatblat/.local/share/mise/installs/ruby/4.0.5/bin:/Users/phatblat/.local/bin:/Users/phatblat/.local/share/mise/shims:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin" } }
++dart = "3.13.0"
++delta = "0.19.2"
++direnv = "2.37.1"
++docker-compose = "5.4.0"
++dotnet = "10.0.400"
++duckdb = "1.5.5"
++duf = "0.9.1"
++dust = "1.2.4"
++fastfetch = "2.67.0"
++fd = "10.4.2"
++fzf = "0.74.2"
++gemini = { version = "0.55.1", allow_builds = ["@github/keytar", "node-pty"] }
++gh = "2.97.0"
++git-lfs = "3.7.1"
++go = "1.26.6"
++gping = "1.20.4"
++gradle = "9.7.0"
++grok = "1.0.4"
++helm = "4.2.4"
++hexyl = "0.17.0"
++hk = "1.55.0"
++hyperfine = "1.20.0"
++java = "26.0.2"
++jjui = "0.10.9"
++jq = "1.8.2"
++jujutsu = "0.44.0"
++just = "1.58.0"
++k3d = "5.9.0"
++kotlin = { version = "2.4.10", bin_path = "kotlinc/bin", asset_pattern = "kotlin-compiler-*.zip" }
++kscript = "4.2.3"
++ktlint = "1.8.0"
++kubectl = "1.36.3"
++lazygit = "0.64.1"
++lsd = "1.2.0"
++lua-language-server = "3.19.1"
++maven = "3.9.16"
++mirrord = "3.247.0"
++mkcert = "1.4.4"
++neovim = "0.12.4"
++ninja = "1.13.2"
++node = "26.7.0"
++opencode = "1.18.18"
++packer = "1.16.0"
++pi = "0.84.1"
++pipx = "1.16.7"
++powershell = "7.6.4"
++protobuf = "35.1"
++python = "3.14.7"
++ripgrep = "15.2.0"
++rtk = "0.45.0"
++ruby = "4.0.6"
++ruff = "0.16.3"
++rust = "1.97.1"
++sccache = "0.17.0"
++sd = "1.1.0"
++shellcheck = "0.11.0"
++shfmt = "3.13.1"
++starship = "1.26.0"
++swiftformat = { version = "0.62.1", rename_exe = "swiftformat", no_app = "true" }
++swiftlint = "0.65.0"
++temporal = "1.31.2"
++terraform = "1.15.8"
++terraform-ls = "0.39.0"
++tmux = "3.7b"
++tree-sitter = "0.26.12"
++typos = "1.49.0"
++uv = "0.12.5"
++xcbeautify = "3.2.1"
++xcodes = "2.0.3"
++xh = "0.26.2"
++yq = "4.53.3"
++zig = "0.16.0"
++zoxide = "0.10.0"
++
++[tools."http:cursor-cli"]
++version = "2026.07.01-777f564"
++url = "https://downloads.cursor.com/lab/2026.07.01-777f564/darwin/arm64/agent-cli-package.tar.gz"
++checksum = "sha256:853979acec109c887623013623ad4dbe1f44d4cbe598ebefaa0e55145d9c993d"
++bin_path = "dist-package"
++bin = "cursor-agent"
++
++# Trust the OS keychain instead of each runtime's bundled root store, so
++# corporate TLS-inspecting proxies (invalid peer certificate: UnknownIssuer)
++# don't break tools like linear-cli (Deno), node, and uv/python.
++[env]
++DENO_TLS_CA_STORE = "system"
++NODE_USE_SYSTEM_CA = "1"
++UV_SYSTEM_CERTS = "1"
++
++# Agent/tool output
++ENABLE_LSP_TOOL = "1"
++FORCE_COLOR = "3"
++
++# Homebrew behavior
++HOMEBREW_NO_ASK = "1"
++HOMEBREW_NO_ENV_HINTS = "1"
++HOMEBREW_CLEANUP_MAX_AGE_DAYS = "30"
++
++# Locale
++LANG = "en_US.UTF-8"
++LANGUAGE = "en_US.UTF-8"
++LC_ALL = "en_US.UTF-8"
++LC_CTYPE = "en_US.UTF-8"
++
++# BSD ls colors
++CLICOLOR = "1"
++LSCOLORS = "ExFxBxDxCxegedabagacad"
++
++# Editor selection inputs. The conditional EDITOR/VISUAL/WAIT_FLAG assignment is moved
++# below mise activation in zsh and config.nu so these shared inputs are available before
++# the shell-specific branch runs.
++EDITOR_CLI = "nvim"
++EDITOR_GUI = "zed"
++WAIT_FLAG_CLI = "--nofork"
++WAIT_FLAG_GUI = "--wait"
++
++# Xcode
++DERIVED_DATA = "{{env.HOME}}/Library/Developer/Xcode/DerivedData"
++
++# iCloud (consumed by .config/zsh/functions/icloud)
++ICLOUD_HOME = "{{env.HOME}}/Library/Mobile Documents"
++
++# Go
++GOPATH = "{{env.HOME}}/go"
++GOPRIVATE = "github.com/phatblat/*"
++
++# Homebrew keg-only toolchains (llvm, icu4c) — previously duplicated in .zshrc
++LDFLAGS = "-L/opt/homebrew/opt/llvm/lib"
++CPPFLAGS = "-I/opt/homebrew/opt/llvm/include"
++CMAKE_PREFIX_PATH = "/opt/homebrew/opt/llvm"
++CGO_CFLAGS = "-I/opt/homebrew/opt/icu4c/include"
++CGO_CXXFLAGS = "-I/opt/homebrew/opt/icu4c/include"
++CGO_LDFLAGS = "-L/opt/homebrew/opt/icu4c/lib"
++PKG_CONFIG_PATH = "/opt/homebrew/opt/icu4c/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
++
++CC_wasm32_unknown_unknown = "/opt/homebrew/opt/llvm/bin/clang"
++
++# Android build + CLI tools on PATH (adb, sdkmanager, emulator, aapt/apksigner).
++# mise emits these on every hook, so they survive in nushell where mise owns PATH.
++# build-tools is pinned to the latest installed version — bump when SDK updates.
++_.path = [
++  "{{env.HOME}}/Library/Android/sdk/platform-tools",
++  "{{env.HOME}}/Library/Android/sdk/cmdline-tools/latest/bin",
++  "{{env.HOME}}/Library/Android/sdk/emulator",
++  "{{env.HOME}}/Library/Android/sdk/build-tools/37.0.0",
++  "{{env.HOME}}/go/bin",
++]
++
++[settings]
++experimental = true
++pin = true
++idiomatic_version_file_enable_tools = ["node"]
++# oh-my-pi, claude-code, and codex ship fixes frequently; skip the 24h
++# minimum_release_age default for them.
++minimum_release_age_excludes = [
++  "github:can1357/oh-my-pi",
++  "claude-code",
++  "codex",
++]
++use_versions_host = false
++
++[settings.python]
++uv_venv_auto = "source"
++
++[settings.aqua]
++github_attestations = false
++
++[settings.npm]
++package_manager = "npm"
++
++[bootstrap.packages]
++"brew-cask:openusage" = "latest"
+diff --git a/.zprofile b/.zprofile
+new file mode 100644
+index 0000..afbc
+--- /dev/null
++++ b/.zprofile
+@@ -0,0 +1,49 @@
++#-------------------------------------------------------------------------------
++#
++# .zprofile
++#
++# .zprofile is for login shells. It is basically the same as .zlogin except that it's sourced before .zshrc whereas .zlogin is sourced after .zshrc. According to the zsh documentation, ".zprofile is meant as an alternative to .zlogin for ksh fans; the two are not intended to be used together, although this could certainly be done if desired."
++#
++# https://unix.stackexchange.com/questions/71253/what-should-shouldnt-go-in-zshenv-zshrc-zlogin-zprofile-zlogout/71258#71258
++#
++#-------------------------------------------------------------------------------
++
++# echo ".zprofile"
++
++# Homebrew
++export PATH="/opt/homebrew/bin:$PATH"
++eval "$(brew shellenv)"
++
++# FVM
++export PATH="$HOME/fvm/default/bin:$PATH"
++
++# Cargo
++source $HOME/.cargo/env
++
++# Jebrains Toolbox App scripts
++export PATH="$PATH:$HOME/Library/Application Support/JetBrains/Toolbox/scripts"
++
++# Added by OrbStack: command-line tools and integration
++# This won't be added again if you remove it.
++source $HOME/.orbstack/shell/init.zsh 2>/dev/null || :
++
++# Java (mise-managed)
++export JAVA_HOME="$($HOME/.local/bin/mise where java)"
++export PATH="$JAVA_HOME/bin:$PATH"
++
++# Expose CLI paths to GUI apps (e.g. CodexBar)
++launchctl setenv CLAUDE_CLI_PATH "$HOME/.local/bin/claude"
++
++# Aliases
++alias ll='ls -l'
++alias la='ls -la'
++
++
++
++# Source .zshrc for login shells (ensures functions are autoloaded)
++if [[ -r "$HOME/.zshrc" ]]; then
++  source "$HOME/.zshrc"
++fi
++
++# Added by Obsidian
++export PATH="$PATH:/Applications/Obsidian.app/Contents/MacOS"
+diff --git a/.zshenv b/.zshenv
+new file mode 100644
+index 0000..4b2f
+--- /dev/null
++++ b/.zshenv
+@@ -0,0 +1,12 @@
++# ~/.zshenv - sourced for all zsh invocations (interactive and non-interactive)
++
++# Add Nix profile bin to PATH
++if [ -d ~/.nix-profile/bin ]; then
++  export PATH="$HOME/.nix-profile/bin:$PATH"
++fi
++
++export PATH="$PATH:$HOME/.puro/bin" # Added by Puro
++export PATH="$PATH:$HOME/.puro/shared/pub_cache/bin" # Added by Puro
++export PATH="$PATH:$HOME/.puro/envs/default/flutter/bin" # Added by Puro
++export PURO_ROOT="/Users/phatblat/.puro" # Added by Puro
++export PUB_CACHE="/Users/phatblat/.puro/shared/pub_cache" # Added by Puro
+diff --git a/.zshrc b/.zshrc
+new file mode 100644
+index 0000..ed80
+--- /dev/null
++++ b/.zshrc
+@@ -0,0 +1,139 @@
++export XDG_CONFIG_HOME=$HOME/.config
++
++# Source Nix profile
++if [ -e ~/.nix-profile/etc/profile.d/nix.sh ]; then
++  . ~/.nix-profile/etc/profile.d/nix.sh
++fi
++
++# Add Nix profile bin to PATH if not already present
++if [ -d ~/.nix-profile/bin ]; then
++  export PATH="$HOME/.nix-profile/bin:$PATH"
++fi
++
++# LLVM (Homebrew keg-only)
++export PATH="/opt/homebrew/opt/llvm/bin:$PATH"
++
++export PATH="$HOME/scripts:/usr/local/bin:$PATH"
++
++# Homebrew setup
++if (( ! $+commands[brew] )); then
++  if [[ -x /opt/homebrew/bin/brew ]]; then
++    eval "$(/opt/homebrew/bin/brew shellenv)"
++  elif [[ -x /usr/local/bin/brew ]]; then
++    eval "$(/usr/local/bin/brew shellenv)"
++  fi
++fi
++if [[ -d "${HOMEBREW_PREFIX}/share/zsh/site-functions" ]]; then
++  fpath+=("${HOMEBREW_PREFIX}/share/zsh/site-functions")
++fi
++
++# Load custom functions via autoload (lazy-loaded on first call)
++fpath=(~/.config/zsh/functions $fpath)
++
++# Initialize completion system (after all fpath modifications)
++autoload -Uz compinit
++compinit -d "${XDG_CONFIG_HOME}/zsh/.zcompdump"
++for _fn_file in ~/.config/zsh/functions/*(N); do
++    [[ -f "$_fn_file" ]] || continue
++    _fn_name="${_fn_file:t}"
++    [[ "$_fn_name" == *.* ]] && continue
++    autoload -Uz "$_fn_name"
++done
++unset _fn_file _fn_name
++
++# Force-load functions that shadow real binaries (aa, bq, cc, dash, dc, diff, fork,
++# genv, gt, jq, log, pkginfo, pp, reset, sha256, sync). Claude Code's shell-snapshot
++# mechanism serializes never-yet-called autoload functions as inert stubs, which
++# permanently breaks them for tool calls run against that snapshot. Eagerly resolving
++# this small, curated set (not all ~390 functions, to keep lazy-loading cheap) avoids
++# the trap for names an agent or script is likely to invoke directly.
++autoload -Uz +X aa bq cc dash dc diff fork genv gt jq log pkginfo pp reset sha256 sync 2>/dev/null
++
++# Set Warp tab title to git repo name on directory change
++WARP_DISABLE_AUTO_TITLE=true
++precmd_functions+=(_set_tab_title)
++
++# User configuration
++
++# History configuration
++HISTFILE="$HOME/.zsh_history"
++HISTSIZE=100000
++SAVEHIST=100000
++setopt INC_APPEND_HISTORY EXTENDED_HISTORY HIST_IGNORE_ALL_DUPS
++
++# Compilation flags
++# export ARCHFLAGS="-arch $(uname -m)"
++
++alias vi="nvim"
++alias vim="nvim"
++
++# Auto-Warpify
++[[ "$-" == *i* ]] && printf 'P$f{"hook": "SourcedRcFileForWarp", "value": { "shell": "zsh", "uname": "Darwin" }}�'
++
++# Added by Windsurf
++export PATH="$HOME/.codeium/windsurf/bin:$PATH"
++
++# System kernel detection
++export KERNEL=$(uname)
++
++# Android SDK configuration
++if is_mac; then
++  export ANDROID_HOME="$HOME/Library/Android/sdk"
++elif is_linux; then
++  export ANDROID_HOME="$HOME/Android/Sdk"
++fi
++
++if [[ -d "$ANDROID_HOME" ]]; then
++  local BUILD_TOOLS_VERSION=$(ls -1r "$ANDROID_HOME/build-tools/" 2>/dev/null | head -1)
++  export NDK_VERSION=$(ls -1r "$ANDROID_HOME/ndk/" 2>/dev/null | head -1)
++  export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/$NDK_VERSION"
++
++  if [[ -n "$BUILD_TOOLS_VERSION" ]]; then
++    export PATH="$PATH:$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/emulator:$ANDROID_HOME/tools:$ANDROID_HOME/tools/bin:$ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION:$ANDROID_HOME/platform-tools:$ANDROID_NDK_HOME"
++  fi
++fi
++
++# Added by LM Studio CLI (lms)
++export PATH="$PATH:$HOME/.cache/lm-studio/bin"
++# End of LM Studio CLI section
++
++# Added by git-ai installer on Thu Oct 23 12:10:36 MDT 2025
++export PATH="$HOME/.git-ai/bin:$PATH"
++
++# Added by Antigravity IDE
++export PATH="$HOME/.antigravity-ide/antigravity-ide/bin:$PATH"
++
++# Initialize mise - version manager for tools
++# NOTE: must be after other PATH modifications so mise paths take precedence
++eval "$(mise activate zsh)"
++
++# Preferred editor: zed locally, nvim over SSH
++if [[ -n "$SSH_CONNECTION" ]]; then
++  export EDITOR="$EDITOR_CLI"
++  export WAIT_FLAG="$WAIT_FLAG_CLI"
++else
++  export VISUAL="$EDITOR_GUI"
++  export WAIT_FLAG="$WAIT_FLAG_GUI"
++fi
++
++# Keep user-managed binaries behind Homebrew and mise tools.
++export PATH="$PATH:$HOME/.local/bin"
++
++# Initialize zoxide - a smarter cd command (after mise, since zoxide is mise-managed)
++eval "$(zoxide init zsh)"
++
++# Initialize direnv - directory-based environment variables
++if command -v direnv &>/dev/null; then
++  eval "$(direnv hook zsh)"
++fi
++
++# Initialize starship - prompt
++if command -v starship &>/dev/null; then
++  eval "$(starship init zsh)"
++fi
++
++# PAI alias
++alias pai="bun $HOME/.claude/skills/PAI/Tools/pai.ts"
++
++source $HOME/.config/broot/launcher/bash/br
++

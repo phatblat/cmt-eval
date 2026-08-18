@@ -1,0 +1,20 @@
+From a6d0882cb4eca566bf5e2e0d09f087e28ddaf6ad Mon Sep 17 00:00:00 2001
+From: Ben Chatelain <ben@octop.ad>
+Date: Sat, 15 Aug 2026 13:38:54 -0400
+Subject: [PATCH 8/8] fix(bin): route POSIX -c probes to zsh in nu-login
+
+Nushell is not POSIX, so callers that probe the login shell with
+`$SHELL -l -i -c '<posix command>'` hit nu's parser and fail with
+nu::parser::parse_mismatch, exiting 1. Cursor and VS Code do exactly
+this to resolve the shell environment at startup, surfacing "Unable to
+resolve your shell environment: Unexpected exit code from spawned shell
+(code 1, signal null)".
+
+Delegate any -c invocation, bare or clustered such as -lic, to the
+existing zsh fallback and reserve nu for interactive login sessions.
+Behavior is unchanged when no -c argument is present.
+
+Verified: Cursor's env probe now exits 0 and resolves 182 variables
+including the mise-managed PATH; shellcheck and shellharden are clean.
+
+Co-Authored-By: oh-my-pi <omp@can.ac>

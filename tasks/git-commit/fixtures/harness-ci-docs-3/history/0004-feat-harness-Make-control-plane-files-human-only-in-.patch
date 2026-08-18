@@ -1,0 +1,78 @@
+From 8993e9a6d39250b8ff0facadee5b222aeb00afa5 Mon Sep 17 00:00:00 2001
+From: Ben Chatelain <ben@octop.ad>
+Date: Wed, 12 Aug 2026 08:06:29 -0400
+Subject: [PATCH 4/8] feat(harness): Make control-plane files human-only in the
+ shared guard
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+PROTECTED_PATHS listed credentials only, so the guard permitted agent writes to
+the guard itself. Verified before this change:
+
+    guard --tool write --path .agents/harness/hooks/safety.py  -> allow
+
+An agent asked to tweak harness configuration could therefore edit its own kill
+switch, and the first time the guard blocked something it would have a plausible
+reason to. CONTROL_PLANE_PATHS closes that: the policy module, the generator,
+the per-harness guard shims, and the autonomy policy are now denied, with a
+message saying to edit them by hand.
+
+Kept deliberately narrow. Entries like `config\.yml$` or `\.gitignore$` were
+considered and rejected — they would block routine agent work in every
+repository, and that cost lands on every session rather than on a
+self-improvement loop.
+
+self-improve-policy.json records which categories of work may be implemented
+autonomously. It is listed in CONTROL_PLANE_PATHS for the obvious reason: scope
+an agent can widen is not scope.
+
+Co-Authored-By: Claude <noreply@anthropic.com>
+---
+ .agents/harness/hooks/safety.py | 26 ++++++++++++++++++++++++++
+ 1 file changed, 26 insertions(+)
+
+diff --git a/.agents/harness/hooks/safety.py b/.agents/harness/hooks/safety.py
+index 780e..0928 100755
+--- a/.agents/harness/hooks/safety.py
++++ b/.agents/harness/hooks/safety.py
+@@ -74,6 +74,26 @@ PROTECTED_PATHS = re.compile(
+     re.IGNORECASE,
+ )
+ 
++# The control plane: the files that decide what this policy permits. An agent
++# able to edit these can switch off every other rule here — including the
++# protected-path list above — and the first time the guard blocks something it
++# will have a plausible reason to try. Keep them human-only: edit by hand.
++#
++# Deliberately narrow. Broad entries like `config\.yml$` or `\.gitignore$` would
++# block routine agent work across every repository, and the cost of that lands
++# on every session, not just on a self-improvement loop.
++CONTROL_PLANE_PATHS = re.compile(
++    r"("
++    r"/\.agents/harness/hooks/|"
++    r"/\.agents/harness/self-improve-policy\.json$|"
++    r"/scripts/agent-harnesses\.py$|"
++    r"/scripts/agent_plugins\.py$|"
++    r"/harness-guard\.(ts|py)$|"
++    r"/(write|bash)-guard\.sh$"
++    r")",
++    re.IGNORECASE,
++)
++
+ SECRET_CONTENT = re.compile(
+     r"("
+     r"AKIA[0-9A-Z]{16}|"
+@@ -132,6 +152,12 @@ def evaluate_write(*, path: str = "", content: str = "") -> GuardDecision:
+         display_path = normalize_path_for_matching(path)
+         if PROTECTED_PATHS.search(display_path):
+             return GuardDecision("deny", f"protected file blocked: {path}")
++        if CONTROL_PLANE_PATHS.search(display_path):
++            return GuardDecision(
++                "deny",
++                f"control-plane file is human-only: {path}. It decides what the "
++                "guard permits, so edit it directly rather than through an agent.",
++            )
+ 
+     if content and SECRET_CONTENT.search(content):
+         return GuardDecision("deny", "secret-like content detected")

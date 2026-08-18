@@ -1,0 +1,6 @@
+From 849eda48a69b47802bf72429eedaf1cbee712301 Mon Sep 17 00:00:00 2001
+From: "renovate[bot]" <29139614+renovate[bot]@users.noreply.github.com>
+Date: Mon, 2 Mar 2026 14:51:07 -0700
+Subject: [PATCH 8/8] chore(deps): update dependency github:harness/harness-cli
+ to v1.3.8
+

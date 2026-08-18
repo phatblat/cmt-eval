@@ -1,0 +1,26 @@
+From 5962509af9f7942e9720fa3ab84f35ee5e827e1b Mon Sep 17 00:00:00 2001
+From: Ben Chatelain <ben@octop.ad>
+Date: Sat, 15 Aug 2026 13:25:13 -0400
+Subject: [PATCH 7/8] =?UTF-8?q?chore:=20bump=20powershell=207.6.4=20?=
+ =?UTF-8?q?=E2=86=92=207.6.5?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ .config/mise/config.toml | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/.config/mise/config.toml b/.config/mise/config.toml
+index 1c06..e380 100644
+--- a/.config/mise/config.toml
++++ b/.config/mise/config.toml
+@@ -122,7 +122,7 @@ opencode = "1.18.18"
+ packer = "1.16.0"
+ pi = "0.84.2"
+ pipx = "1.16.7"
+-powershell = "7.6.4"
++powershell = "7.6.5"
+ protobuf = "35.1"
+ python = "3.14.7"
+ ripgrep = "15.2.0"

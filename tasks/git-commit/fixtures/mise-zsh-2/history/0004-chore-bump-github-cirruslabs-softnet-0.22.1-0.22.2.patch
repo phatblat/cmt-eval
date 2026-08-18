@@ -1,0 +1,26 @@
+From 6b753311902bc101239eeaaa4f9e95e9393ce0b3 Mon Sep 17 00:00:00 2001
+From: Ben Chatelain <ben@octop.ad>
+Date: Sat, 15 Aug 2026 13:24:47 -0400
+Subject: [PATCH 4/8] =?UTF-8?q?chore:=20bump=20github:cirruslabs/softnet?=
+ =?UTF-8?q?=200.22.1=20=E2=86=92=200.22.2?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ .config/mise/config.toml | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/.config/mise/config.toml b/.config/mise/config.toml
+index 8ff8..4d9b 100644
+--- a/.config/mise/config.toml
++++ b/.config/mise/config.toml
+@@ -23,7 +23,7 @@
+ "cargo:wasm-bindgen-cli" = "0.2.127"
+ "cargo:wasm-pack" = "0.15.0"
+ "github:can1357/oh-my-pi" = "17.3.4"
+-"github:cirruslabs/softnet" = "0.22.1"
++"github:cirruslabs/softnet" = "0.22.2"
+ "github:DataDog/pup" = "1.10.8"
+ "github:Dicklesworthstone/beads_rust" = "0.3.0"
+ "github:diggerhq/opencomputer" = "0.6.0.39"

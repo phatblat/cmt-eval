@@ -1,0 +1,5 @@
+From 4675da444515813b5106342ee35af6c3c01d1fb0 Mon Sep 17 00:00:00 2001
+From: Ben Chatelain <ben@octop.ad>
+Date: Sat, 18 Oct 2025 19:53:39 -0600
+Subject: [PATCH 8/8] build(tools): add shellcheck@0.11.0
+

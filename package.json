@@ -1,0 +1,16 @@
+{
+  "name": "evalkit",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "bin": { "evalkit": "./evalkit/cli.ts" },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.9.0"
+  },
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "bun test",
+    "evalkit": "bun run evalkit/cli.ts"
+  }
+}

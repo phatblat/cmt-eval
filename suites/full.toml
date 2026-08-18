@@ -1,0 +1,27 @@
+task = "git-commit"
+models = [
+  "anthropic/claude-haiku-4-5",
+  "anthropic/claude-sonnet-5",
+  "anthropic/claude-opus-5",
+  "anthropic/claude-fable-5",
+  "anthropic/claude-sonnet-4-6",
+  "openai-codex/gpt-5.6-luna",
+  "openai-codex/gpt-5.6-terra",
+  "openai-codex/gpt-5.5",
+  "openai-codex/gpt-5.6-sol",
+  "cursor/gemini-3.5-flash",
+  "spark/nvidia/Qwen3.6-35B-A3B-NVFP4",
+]
+thinking = ["low", "medium", "high"]
+fixtures = ["shellcheck-1", "mise-zsh-2", "harness-ci-docs-3", "gastown-routing-4"]
+reps = 3
+perProviderJobs = 1
+retries = 2
+
+[weights]
+countMatch = 0.40
+groupingScore = 0.30
+convMsgs = 0.10
+trailerOk = 0.10
+treeClean = 0.05
+typeMatch = 0.05

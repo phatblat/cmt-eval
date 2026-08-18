@@ -1,0 +1,29 @@
+id = "gastown-routing-4"
+description = "three unrelated single-file concerns plus a five-file feature (strongest grouping discriminator)"
+expectedCommits = 4
+timeoutS = 480
+
+[source]
+repo = "/Users/phatblat"
+base = "0bb9e987b9e4"
+commits = ["6f6ac47572bb", "e689e8c92659", "295bec5be970", "b35eb2f114a7"]
+
+[[group]]
+type = "style"
+subject = "codexbar: reorder gemini entry in config"
+paths = [".codexbar/config.json"]
+
+[[group]]
+type = "feat"
+subject = "tmux: add vi copy mode and wheel scroll bindings"
+paths = [".config/tmux/tmux.conf"]
+
+[[group]]
+type = "feat"
+subject = "claude: add policy-limits.json"
+paths = [".claude/policy-limits.json"]
+
+[[group]]
+type = "feat"
+subject = "gt: add smart agent routing for gastown sling"
+paths = ["docs/gastown-agent-routing.md", "justfile", "scripts/gt-agent-policy-apply", "scripts/gt-mise-bump-polecats", "scripts/gt-sling-smart"]
