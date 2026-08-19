@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { RESULT_COLUMNS, type ResultRow, type RunMeta } from "../runner.ts";
 import { mean, statsByModelThinking, statsByModelThinkingFixture, suiteTotals, type CellStats } from "./aggregate.ts";
 import { esc, groupedBars, heatmap, scatter, stackedBars, whiskerBars, type Series } from "./charts.ts";
+import { htmlTable, mdTable, type TableData } from "./table.ts";
 
 const CAVEATS =
   "> **Caveats:** `cursor` and `spark` are unpriced (subscription / local box) so their dollar figures are 0; " +
@@ -140,8 +141,6 @@ export function buildCharts(rows: ResultRow[]): Record<string, string> {
 // Tables (shared data, rendered to markdown or HTML)
 // ---------------------------------------------------------------------------
 
-type TableData = { headers: string[]; body: string[][] };
-
 function leaderboardData(rows: ResultRow[]): TableData {
   const stats = statsByModelThinking(rows).sort((a, b) => b.compositeMean - a.compositeMean);
   const body = stats.map((s) => {
@@ -180,23 +179,6 @@ function failureTableData(rows: ResultRow[]): TableData {
   const failures = rows.filter((r) => r.status !== "ok");
   const body = failures.map((r) => [r.cellId, r.status, String(r.attempts), r.errorMessage.replace(/\s+/g, " ").slice(0, 200)]);
   return { headers: ["cellId", "status", "attempts", "error"], body };
-}
-
-function mdTable(data: TableData): string {
-  if (data.body.length === 0) return "_none_\n";
-  const escapeCell = (c: string) => c.replace(/\|/g, "\\|");
-  const head = `| ${data.headers.join(" | ")} |\n| ${data.headers.map(() => "---").join(" | ")} |`;
-  const body = data.body.map((r) => `| ${r.map(escapeCell).join(" | ")} |`).join("\n");
-  return `${head}\n${body}\n`;
-}
-
-function htmlTable(data: TableData): string {
-  const thead = `<tr>${data.headers.map((h) => `<th>${esc(h)}</th>`).join("")}</tr>`;
-  const tbody =
-    data.body.length === 0
-      ? `<tr><td colspan="${data.headers.length}"><em>none</em></td></tr>`
-      : data.body.map((r) => `<tr>${r.map((c) => `<td>${esc(c)}</td>`).join("")}</tr>`).join("");
-  return `<table><thead>${thead}</thead><tbody>${tbody}</tbody></table>`;
 }
 
 // ---------------------------------------------------------------------------

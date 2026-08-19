@@ -33,7 +33,7 @@ function sd(xs: number[]): number {
   return Math.sqrt(mean(xs.map((x) => (x - m) ** 2)));
 }
 
-function median(xs: number[]): number {
+export function median(xs: number[]): number {
   if (xs.length === 0) return 0;
   const sorted = [...xs].sort((a, b) => a - b);
   const mid = Math.floor(sorted.length / 2);

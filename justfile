@@ -47,6 +47,16 @@ eval SUITE="focus" JOBS="":
 report RUN="latest":
     bun run evalkit/cli.ts report --run {{RUN}}
 
+# Overlay composite score / wall time across multiple past runs (default: all runs/*).
+compare RUNS="" OUT="runs/compare":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ -n "{{RUNS}}" ]; then
+      bun run evalkit/cli.ts compare --runs {{RUNS}} --out {{OUT}}
+    else
+      bun run evalkit/cli.ts compare --out {{OUT}}
+    fi
+
 # Publish a run's summary artifacts (no session logs) into examples/<NAME>/.
 publish-example RUN="latest" NAME="":
     #!/usr/bin/env bash

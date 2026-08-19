@@ -2,11 +2,13 @@
 // Subcommand dispatch for the evalkit CLI.
 
 import { parseArgs } from "node:util";
+import { readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { loadSuite } from "./suite.ts";
 import { priceRun, type TokenTotals } from "./models.ts";
 import { buildCells, runSuite, updateLatestSymlink, writeMeta, type ResultRow, type RunMeta } from "./runner.ts";
 import { renderReport, consoleSummary } from "./report/render.ts";
+import { formatRunLabel, renderCompare, type RunSeries } from "./report/compare.ts";
 import { mean } from "./report/aggregate.ts";
 import { formatHits, scanAllFixtures } from "./secrets.ts";
 import { buildFixtures, verifyFixtures } from "../tasks/git-commit/build.ts";
@@ -187,6 +189,38 @@ async function cmdReport(args: string[]): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// compare
+// ---------------------------------------------------------------------------
+
+async function cmdCompare(args: string[]): Promise<void> {
+  const { values } = parseArgs({ args, options: { runs: { type: "string" }, out: { type: "string", default: "runs/compare" } } });
+
+  const runIds = values.runs
+    ? values.runs.split(",").map((s) => s.trim()).filter((s) => s.length > 0)
+    : (await readdir(RUNS_DIR, { withFileTypes: true }))
+        .filter((d) => d.isDirectory() && d.name !== "latest")
+        .map((d) => d.name)
+        .sort();
+
+  if (runIds.length < 2) {
+    throw new Error(`compare needs at least 2 runs under ${RUNS_DIR}, found ${runIds.length}: ${runIds.join(", ") || "none"}`);
+  }
+
+  const runs: RunSeries[] = [];
+  for (const runId of runIds) {
+    const runDir = join(RUNS_DIR, runId);
+    const rows = await readResultsJsonl(join(runDir, "results.jsonl"));
+    const meta = JSON.parse(await Bun.file(join(runDir, "meta.json")).text()) as RunMeta;
+    runs.push({ runId: meta.runId, suite: meta.suite, label: formatRunLabel(meta), rows });
+  }
+
+  const outDir = resolve(values.out!);
+  await renderCompare({ outDir, runs });
+  console.log(`Compared ${runs.length} runs: ${runs.map((r) => r.label).join(", ")}`);
+  console.log(`Report: ${join(outDir, "compare.md")}`);
+}
+
+// ---------------------------------------------------------------------------
 // dispatch
 // ---------------------------------------------------------------------------
 
@@ -198,7 +232,8 @@ Commands:
   scan                                           Secret-scan built fixtures
   estimate --suite <name> [--profile-from <id>]  Project run count, cost, and wall clock
   eval --suite <name> [--jobs N] [--keep-repos]  Run a suite and write runs/<runId>/
-  report [--run <id|latest>]                     Re-render results.csv/report.md/report.html/charts`;
+  report [--run <id|latest>]                     Re-render results.csv/report.md/report.html/charts
+  compare [--runs <id,id,...>] [--out <dir>]     Overlay composite score/wall time across past runs (default: all)`;
 
 async function main(): Promise<void> {
   const [sub, ...rest] = process.argv.slice(2);
@@ -215,6 +250,8 @@ async function main(): Promise<void> {
       return cmdEval(rest);
     case "report":
       return cmdReport(rest);
+    case "compare":
+      return cmdCompare(rest);
     default:
       console.error(USAGE);
       process.exit(sub === undefined ? 0 : 1);
