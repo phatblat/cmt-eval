@@ -9,8 +9,7 @@
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { git, gitOk, materialize } from "../../evalkit/gitrepo.ts";
-import { formatHits, redactText, scanFixtureDir } from "../../evalkit/secrets.ts";
+import { formatHits, git, gitOk, materialize, redactText, scanFixtureDir } from "@phatblat/evalkit";
 import { FIXTURES_DIR, loadFixture } from "./task.ts";
 
 type GroupSpec = { sha: string; type: string; subject: string; paths: string[] };

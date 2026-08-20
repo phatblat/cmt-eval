@@ -7,8 +7,7 @@
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { git, gitOk, materialize } from "../../evalkit/gitrepo.ts";
-import type { EvalTask, Fixture, Group, Metrics, PreparedRun } from "../../evalkit/task.ts";
+import { git, gitOk, materialize, type EvalTask, type Fixture, type Group, type Metrics, type PreparedRun } from "@phatblat/evalkit";
 
 export const FIXTURES_DIR = join(import.meta.dir, "fixtures");
 

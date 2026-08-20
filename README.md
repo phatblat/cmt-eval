@@ -13,10 +13,11 @@ distinct concerns, invokes `omp -p "/git:commit"` against it, then grades
 commit count, file grouping, message convention, the required attribution
 trailer, and tree cleanliness.
 
-> **Note:** `evalkit/` is subject-agnostic but currently lives in this repo
-> next to the `git-commit` subject it evaluates, and may be split into a
-> standalone package later. The only place the framework names a concrete
-> subject is the `TASKS` registry in `evalkit/task.ts`.
+> **Note:** `evalkit` is a standalone framework developed at
+> [`github.com/phatblat/evalkit`](https://github.com/phatblat/evalkit)
+> (`@phatblat/evalkit` on npm) and consumed here via `bun link`. The only
+> place this repo names a concrete subject is the `taskRegistry([...])` call
+> in `cli.ts`.
 
 ## Quickstart
 
@@ -41,7 +42,7 @@ just report                 # renders runs/latest/{report.md,report.html,results
 ```
 
 `just eval` also takes `JOBS=N` to cap how many providers run concurrently.
-To debug a single cell, `bun run evalkit/cli.ts eval --suite smoke --keep-repos`
+To debug a single cell, `bun run cli.ts eval --suite smoke --keep-repos`
 leaves each scratch repo on disk instead of deleting it.
 
 ## Suites
@@ -145,15 +146,7 @@ timings are measured with providers serialized (`wallS` includes ~1-2s of
 ## Repo layout
 
 ```
-evalkit/            subject-agnostic framework
-  cli.ts            command dispatch
-  suite.ts          suite TOML load + one-pass validation
-  runner.ts         matrix expansion, per-provider scheduling, result rows
-  models.ts         model catalog + pricing, via `omp models --json`
-  gitrepo.ts        git helpers, scratch-repo materialization
-  omp.ts            agent invocation, token and cost accounting
-  secrets.ts        secret-pattern scanner for fixture patches
-  report/           SVG charts, aggregation, md/html/csv rendering
+cli.ts              entry point: binds gitCommitTask + fixture commands to runCli()
 tasks/git-commit/   the subject under test: prompt, grading, fixture mining
 suites/             matrix definitions
 test/               bun tests — no tokens, no network
@@ -163,15 +156,15 @@ examples/           published run summaries (`just publish-example`)
 
 ## Adding a new subject under test
 
-1. Implement the `EvalTask` interface (`evalkit/task.ts`) in a new
+1. Implement the `EvalTask` interface (from `@phatblat/evalkit`) in a new
    `tasks/<name>/task.ts`: `fixtures()`, `prepare()`, `prompt()`, `grade()`,
    `composite()`.
-2. Register it in `evalkit/task.ts`'s `TASKS` map.
+2. Add the task to the `taskRegistry([...])` array in `cli.ts`.
 3. Add fixtures under `tasks/<name>/fixtures/<id>/`.
 4. Point a suite (`suites/*.toml`) at `task = "<name>"`.
 
-No other framework code changes — `evalkit/` (runner, scheduler, model
-catalog, reporting) is fully subject-agnostic.
+No other framework code changes — `@phatblat/evalkit` (runner, scheduler,
+model catalog, reporting) is fully subject-agnostic.
 
 ## 📄 License
 

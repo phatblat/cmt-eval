@@ -7,8 +7,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { gitOk } from "../evalkit/gitrepo.ts";
-import type { Metrics } from "../evalkit/task.ts";
+import { gitOk, type Metrics } from "@phatblat/evalkit";
 import { gitCommitTask } from "../tasks/git-commit/task.ts";
 
 const TRAILER = "Co-Authored-By: oh-my-pi <omp@can.ac>";
