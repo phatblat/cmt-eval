@@ -2,10 +2,11 @@
 
 ## Project Overview
 
-`cmt-eval` hosts **`evalkit`**, a framework for evaluating a CLI coding agent across a
-matrix of **models × thinking levels × fixtures × repetitions**. It runs the agent
-against a scratch git repo, grades **what actually landed in git state** — never the
-session transcript — and reports wall clock, tokens, and dollar cost.
+`cmt-eval` evaluates the user's `/git:commit` skill using **`@phatblat/evalkit`**, an
+external framework for evaluating a CLI coding agent across a matrix of **models ×
+thinking levels × fixtures × repetitions**. It runs the agent against a scratch git
+repo, grades **what actually landed in git state** — never the session transcript —
+and reports wall clock, tokens, and dollar cost.
 
 The first (and currently only) subject under test is the user's `/git:commit` skill
 driven by [`omp`](https://github.com/can1357/oh-my-pi). Each run materializes a repo
@@ -15,28 +16,32 @@ Commits conformance, the `Co-Authored-By` trailer, and tree cleanliness.
 
 ## Architecture & Data Flow
 
-`evalkit/` is **subject-agnostic**; `tasks/<name>/` is the subject under test. The
-dependency arrow points *framework → subject* only (`evalkit/task.ts:36-38` documents
-this explicitly). Never import `evalkit/` internals *from* a task except the shared
-helpers in `gitrepo.ts` / `secrets.ts` / `task.ts`.
+`@phatblat/evalkit` (developed at `~/dev/evals/evalkit`, consumed here via `bun link`)
+is **subject-agnostic**; `tasks/<name>/` is the subject under test. The dependency
+arrow points *framework → subject* only — evalkit never imports a concrete subject; this
+repo supplies `gitCommitTask` to `taskRegistry([...])` in `cli.ts`. Import evalkit's
+`git`/`gitOk`/`materialize`/`formatHits`/`redactText`/`scanFixtureDir` helpers and its
+`EvalTask`/`Fixture`/`Metrics`/`PreparedRun` types from the `@phatblat/evalkit` package
+root, never by relative path.
 
 One `eval` run, end to end:
 
 ```
-cli.ts cmdEval
-  └─ suite.ts   loadSuite()      TOML → validate → resolveTask() + catalog() + task.fixtures()
-  └─ runner.ts  buildCells()     rep-major expansion → Cell[] (cellId = fixture__model__thinking__rN)
-  └─ runner.ts  runSuite()       group by provider → dispatch
-       └─ runCell() per cell:
-            gitrepo.ts  scratchRoot()  → $TMPDIR/cmt-eval/<runId>/<cellId>
-            task.prepare()             → materialize(): git init -b main, `git am` history/*.patch,
-                                         `git apply --binary` dirty.patch → { repo, baseTip }
-            omp.ts      runOmp()       → Bun.spawn omp with task.prompt(fixture)
-            omp.ts      collectUsage() → glob sessions/**/*.jsonl, sum assistant usage
-            task.grade()               → Metrics read from git state at baseTip..HEAD
-            task.composite()           → weighted score (forced to 0 unless exit code 0)
-       └─ append ResultRow to runs/<runId>/results.jsonl
-  └─ report/render.ts renderReport()   → results.csv, report.md, report.html, charts/*.svg
+cli.ts runCli({ tasks: taskRegistry([gitCommitTask]), scratchNamespace: "cmt-eval" })
+  └─ cmdEval
+       suite.ts   loadSuite(path, tasks)  TOML → validate → resolveTask(tasks, name) + catalog() + task.fixtures()
+       runner.ts  buildCells()            rep-major expansion → Cell[] (cellId = fixture__model__thinking__rN)
+       runner.ts  runSuite()              group by provider → dispatch
+            └─ runCell() per cell:
+                 gitrepo.ts  scratchRoot(namespace, runId, cellId) → $TMPDIR/cmt-eval/<runId>/<cellId>
+                 task.prepare()             → materialize(): git init -b main, `git am` history/*.patch,
+                                              `git apply --binary` dirty.patch → { repo, baseTip }
+                 omp.ts      runOmp()       → Bun.spawn omp with task.prompt(fixture)
+                 omp.ts      collectUsage() → glob sessions/**/*.jsonl, sum assistant usage
+                 task.grade()               → Metrics read from git state at baseTip..HEAD
+                 task.composite()           → weighted score (forced to 0 unless exit code 0)
+            └─ append ResultRow to runs/<runId>/results.jsonl
+       report/render.ts renderReport()     → results.csv, report.md, report.html, charts/*.svg
 ```
 
 **Scheduling model.** Cells are **rep-major** (every rep sweeps the whole matrix) so a
@@ -48,7 +53,7 @@ Two shared cursors under `Promise.all` implement this: one across providers (cap
 `contended` is recorded per row whenever `perProviderJobs > 1` — **a contended row's
 timings are not comparable to a serialized one.**
 
-**Extension point.** `EvalTask` (`evalkit/task.ts:27-34`) is the entire contract:
+**Extension point.** `EvalTask` (from `@phatblat/evalkit`) is the entire contract:
 
 ```ts
 export interface EvalTask {
@@ -61,16 +66,15 @@ export interface EvalTask {
 }
 ```
 
-Adding a subject: implement it in `tasks/<name>/task.ts`, register it in the `TASKS`
-map in `evalkit/task.ts`, add `tasks/<name>/fixtures/<id>/`, and point a suite at
-`task = "<name>"`. No other framework change is required.
+Adding a subject: implement it in `tasks/<name>/task.ts`, add it to the
+`taskRegistry([...])` array in `cli.ts`, add `tasks/<name>/fixtures/<id>/`, and point a
+suite at `task = "<name>"`. No `@phatblat/evalkit` change is required.
 
 ## Key Directories
 
 | Path | Purpose |
 | --- | --- |
-| `evalkit/` | Subject-agnostic framework: CLI, scheduler, model catalog, git/scratch helpers, secret scanner, reporting |
-| `evalkit/report/` | `charts.ts` (pure SVG renderers), `aggregate.ts` (mean/sd/median, `CellStats`), `render.ts` (md/html/csv assembly) |
+| `cli.ts` | Entry point: binds `gitCommitTask` + fixture-mining commands to `@phatblat/evalkit`'s `runCli()` |
 | `tasks/git-commit/` | The subject under test: `task.ts` (prompt + grading), `build.ts` (fixture mining/verification) |
 | `tasks/git-commit/fixtures/<id>/` | `fixture.toml`, `history/*.patch` (8 real prior commits), `dirty.patch` |
 | `suites/` | `smoke.toml`, `focus.toml`, `full.toml` — matrix definitions + composite weights |
@@ -80,20 +84,32 @@ map in `evalkit/task.ts`, add `tasks/<name>/fixtures/<id>/`, and point a suite a
 
 ## Development Commands
 
-`just` is the entry point; every recipe delegates to `bun run evalkit/cli.ts <cmd>`.
+`just` is the entry point; every recipe delegates to `bun run cli.ts <cmd>` (backed by
+`@phatblat/evalkit`'s `runCli()`), except `deps`/`link`, which manage the framework
+dependency itself.
+
+`just deps` clones `@phatblat/evalkit` to `$HOME/dev/evals/evalkit` and registers it
+with `bun link` on demand (both steps are skipped once already in place), then runs
+`bun install`. `just link <path>` re-points the global `@phatblat/evalkit` link at a
+different local checkout without a full `deps` run.
+
+Just recipe parameters are **positional**, not `NAME=value`: `just estimate focus`, not
+`just estimate SUITE=focus` — the latter is passed through as a literal and fails with
+`Cannot find module '.../suites/SUITE=focus.toml'`.
 
 **Free (no tokens, no network):**
 
 ```sh
-just deps                    # bun install
+just deps                    # clone/link @phatblat/evalkit if needed, then bun install
+just link                    # re-register a different local evalkit checkout
 just check                   # tsc --noEmit
 just test                    # bun test
 just fixtures                # mine fixtures from a dotfiles checkout; pure git, no agent
 just verify-fixtures         # round-trip: git am/apply, dirty path set, index clean, tree dirty
 just scan                    # secret-scan every fixture patch
-just estimate SUITE=focus    # projected run count + dollar cost, spends nothing
-just report RUN=latest       # re-render csv/md/html/charts for a past run
-just publish-example RUN=latest NAME=foo
+just estimate focus          # projected run count + dollar cost, spends nothing
+just report latest           # re-render csv/md/html/charts for a past run
+just publish-example latest foo
 just clean                   # rm -rf runs/
 ```
 
@@ -101,11 +117,11 @@ just clean                   # rm -rf runs/
 
 ```sh
 just smoke                   # 2 runs, cheapest model (~$0.10, <3 min)
-just eval SUITE=focus        # 168 runs;  SUITE=full → 396 runs;  optional JOBS=N
+just eval focus              # 168 runs;  eval full → 396 runs;  optional JOBS as a 2nd arg
 ```
 
-Always run `just estimate SUITE=<name>` before `just eval`. Direct CLI equivalents:
-`bun run evalkit/cli.ts eval --suite focus [--jobs N] [--keep-repos]`.
+Always run `just estimate <name>` before `just eval`. Direct CLI equivalent:
+`bun run cli.ts eval --suite focus [--jobs N] [--keep-repos]`.
 
 Single test file: `bun test test/grade.test.ts`.
 
@@ -113,7 +129,8 @@ Single test file: `bun test test/grade.test.ts`.
 
 - **File headers are mandatory.** Every source file opens with a `//` comment block
   explaining *why* the module exists and what invariant it protects — not what the code
-  does. Match this when adding files (see `evalkit/runner.ts:1-7`, `evalkit/report/charts.ts:1-3`).
+  does. Match this when adding files (see `tasks/git-commit/task.ts:1-5`, or
+  `@phatblat/evalkit`'s `src/runner.ts:1-9`).
 - **Imports:** local imports carry an explicit `.ts` extension
   (`allowImportingTsExtensions` is on): `import { git } from "./gitrepo.ts"`. Node
   builtins always use the `node:` prefix. Bun APIs come from the bare `bun` specifier
@@ -122,7 +139,7 @@ Single test file: `bun test test/grade.test.ts`.
   `import { fn, type Type }`. Omitting it is a compile error.
 - **`noUncheckedIndexedAccess` is on** — indexed access yields `T | undefined`. The
   codebase uses `!` with an inline justification comment where the bound is already
-  checked (`evalkit/runner.ts:264`), rather than defensive re-checks.
+  checked (see `@phatblat/evalkit`'s `src/runner.ts`), rather than defensive re-checks.
 - **Plain functions and `type` aliases; no classes** except error subclasses
   (`SuiteError`, `GitError`). State travels in options objects, not fields.
 - **Validation collects all problems in one pass**, then throws once
@@ -141,19 +158,15 @@ Single test file: `bun test test/grade.test.ts`.
   is no TOML parser dependency.
 - **Charts are hand-written SVG strings.** No chart library, no headless browser, no
   canvas, and no `http` references anywhere — `report.html` must stay fully
-  self-contained and diffable. `test/charts.test.ts` asserts the absence of `http`.
+  self-contained and diffable (`@phatblat/evalkit`'s `test/charts.test.ts` asserts the
+  absence of `http`).
 
 ## Important Files
 
 | File | Why it matters |
 | --- | --- |
-| `evalkit/cli.ts` | Command dispatch: `build-fixtures`, `verify-fixtures`, `scan`, `estimate`, `eval`, `report` |
-| `evalkit/task.ts` | `EvalTask` interface, `Fixture`/`Metrics` types, `TASKS` registry, `resolveTask()` |
-| `evalkit/runner.ts` | `buildCells()`, `runSuite()`, `runCell()`, `ResultRow`, `RESULT_COLUMNS` |
-| `evalkit/suite.ts` | Suite schema + one-pass validation (weights must sum to `1 ± 0.001`) |
-| `evalkit/gitrepo.ts` | `git()`/`gitOk()`, `scratchRoot()`, `materialize()` |
-| `evalkit/omp.ts` | `buildArgv()`, `runOmp()`, `collectUsage()`, `writeEvalConfig()` |
-| `evalkit/models.ts` | `catalog()` shells `omp models --json`; `isPriced()`, `priceRun()` |
+| `cli.ts` | Entry point: binds `gitCommitTask` to `taskRegistry([...])` and calls `@phatblat/evalkit`'s `runCli()` |
+| `@phatblat/evalkit` | External framework package (`~/dev/evals/evalkit`, consumed via `bun link`): `EvalTask`/`taskRegistry()`, `buildCells()`/`runSuite()`/`runCell()`, `loadSuite()`, `git()`/`gitOk()`/`scratchRoot()`/`materialize()`, `catalog()`/`priceRun()`, reporting |
 | `tasks/git-commit/task.ts` | All grading logic; `TRAILER_LINE`, `TYPE_PREFIX_RE` |
 | `tasks/git-commit/build.ts` | `FIXTURE_SPECS`, `buildFixtures()`, `verifyFixture()` |
 | `mise.toml` | Pins bun `1.3.14`, just `1.58.0`, `github:can1357/oh-my-pi` `17.3.5` |
@@ -161,7 +174,7 @@ Single test file: `bun test test/grade.test.ts`.
 ### Suite TOML schema (`suites/*.toml`)
 
 ```toml
-task = "git-commit"                              # key in the TASKS registry
+task = "git-commit"                              # key in the taskRegistry([...]) passed to runCli in cli.ts
 models = ["anthropic/claude-haiku-4-5"]          # omp selectors, validated against `omp models --json`
 thinking = ["low"]                               # each level checked against each model's support
 fixtures = ["mise-zsh-2", "harness-ci-docs-3"]   # ids under tasks/<task>/fixtures/
@@ -189,10 +202,12 @@ typeMatch = 0.05
 - **Bun is mandatory** (`1.3.14`, pinned in `mise.toml`); Node cannot run this. The code
   depends on `Bun.spawn`/`spawnSync`, `Bun.Glob`, `Bun.file`/`Bun.write`, and Bun's ESM
   TOML loader. `tsconfig.json` sets `types: ["bun"]` and `moduleResolution: "bundler"`.
-- **Zero runtime dependencies.** `bun.lock` contains only `@types/bun` and `typescript`
-  (plus transitives). Keep it that way — adding a dependency is a design decision, not a
-  convenience. Charts, TOML parsing, and CSV are all hand-rolled for this reason.
-- **No build step.** `tsc` runs with `noEmit`; `bun run evalkit/cli.ts` executes TS directly.
+- **No third-party runtime dependencies beyond the linked framework.** `dependencies`
+  holds only `@phatblat/evalkit` (via `bun link`, no published bytes); `bun.lock`
+  otherwise contains just `@types/bun` and `typescript` (plus transitives). Adding a
+  real published dependency is a design decision, not a convenience. Charts, TOML
+  parsing, and CSV are all hand-rolled for this reason.
+- **No build step.** `tsc` runs with `noEmit`; `bun run cli.ts` executes TS directly.
 - **No linter, no formatter, and no CI are configured.** Do not add or assume one; match
   surrounding style by hand. `just check` (`tsc --noEmit`) is the only static gate.
 - `omp` itself is a pinned tool dependency (`github:can1357/oh-my-pi 17.3.5`) — the model
@@ -202,7 +217,7 @@ typeMatch = 0.05
 
 - **Framework:** `bun:test` (`import { describe, expect, test } from "bun:test"`). Files
   live in `test/*.test.ts` — not colocated, no `.spec.ts`, no config needed.
-- **Tests spend nothing.** No test imports `evalkit/omp.ts` or touches the network. They
+- **Tests spend nothing.** No test imports `@phatblat/evalkit`'s `omp.ts` or touches the network. They
   build **real** temp git repos (`mkdtempSync` → `gitCommitTask.prepare()` → `rmSync` in a
   `finally`) and hand-commit content with `gitOk()`. Keep this property.
 - `test/grade.test.ts` is the **grader-discrimination proof**: it hand-commits a fixture's
@@ -210,10 +225,9 @@ typeMatch = 0.05
   then squashes everything into one commit and asserts the score collapses into a narrow
   band. If you change grading, this is the test that must be updated *and* must still
   discriminate.
-- `test/suite.test.ts` asserts validation catches bad thinking levels, unknown models/
-  fixtures, `reps < 1`, and weight sums **before** any `omp` invocation.
-- `test/charts.test.ts` asserts SVG output starts with `<svg`, contains no `http`, and has
-  the right structural element counts.
+- Suite-validation and chart-rendering tests (formerly `test/suite.test.ts` and
+  `test/charts.test.ts`) now live in the `@phatblat/evalkit` repo, since the framework
+  must be testable with no subject present. `test/` here holds only `grade.test.ts`.
 - **Assertion style:** `toBe` for primitives, `toBeCloseTo(value, 9)` for float scores,
   `toBeInstanceOf` for error classes, `toBeGreaterThan`/`toBeLessThan` for bands. Test
   names are lowercase present-tense phrases (`"throws when a model does not support …"`).
@@ -227,18 +241,20 @@ typeMatch = 0.05
    `git show --name-only`, `git status --porcelain`, and commit bodies. Reading the
    session log to award points defeats the entire experiment.
 2. **Fixtures are mined from real history, never invented.** `just fixtures` replays real
-   commits from a local `phatblat/dotfiles` checkout (read-only, passed as
-   `SOURCE=<path>`) and records SHAs in `fixture.toml`.
-   If a fixture is unsuitable, source a different commit range — do not fabricate diffs.
-3. **Scratch repos must live outside `$HOME`.** `scratchRoot()` throws if `$TMPDIR`
-   resolves inside the home directory, because `omp`'s AGENTS.md discovery walks ancestor
-   directories — a scratch repo under `~/dev/...` would silently leak **this file** into
-   every graded run's context.
-4. **Every fixture patch is secret-scanned** (`evalkit/secrets.ts`, 8 patterns) at build
+   commits from a local `phatblat/dotfiles` checkout (read-only, passed as the 2nd
+   positional argument, e.g. `just fixtures all <path>`) and records SHAs in
+   `fixture.toml`. If a fixture is unsuitable, source a different commit range — do not
+   fabricate diffs.
+3. **Scratch repos must live outside `$HOME`.** `scratchRoot()` (enforced inside
+   `@phatblat/evalkit`) throws if `$TMPDIR` resolves inside the home directory, because
+   `omp`'s AGENTS.md discovery walks ancestor directories — a scratch repo under
+   `~/dev/...` would silently leak **this file** into every graded run's context.
+4. **Every fixture patch is secret-scanned** (`@phatblat/evalkit`'s `secrets.ts`, 8 patterns) at build
    time and via `just scan`. Benign pattern-matching content is redacted with a
    line-count-preserving placeholder so diffs still apply.
-5. **`composite` is forced to `0` for any run that did not exit `0`.** A crashed run is a
-   failed run, not a missing data point.
+5. **`composite` is forced to `0` for any run that did not exit `0`** (enforced inside
+   `@phatblat/evalkit`'s `runCell()`). A crashed run is a failed run, not a missing data
+   point.
 6. **Weights are the opinion of the evaluation.** Changing `[weights]` reorders the
    leaderboard; do not tune them to make a result look better.
 7. **Unpriced models report `costUsd = 0` legitimately** (`cursor`, `spark` are

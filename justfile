@@ -1,9 +1,28 @@
+EVALKIT := "$HOME/dev/evals/evalkit"
+EVALKIT_REPO := "git@github.com:phatblat/evalkit.git"
+
 @_default:
     just --list
 
-# Install dependencies.
-deps:
+# Install dependencies, cloning and bun-linking the evalkit framework if needed.
+deps DIR=EVALKIT:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    dir="{{ DIR }}"
+    if [ ! -d "$dir/.git" ]; then
+      echo "cloning {{ EVALKIT_REPO }} -> $dir"
+      mkdir -p "$(dirname "$dir")"
+      git clone {{ EVALKIT_REPO }} "$dir"
+    fi
+    if [ ! -e "${BUN_INSTALL:-$HOME/.bun}/install/global/node_modules/@phatblat/evalkit" ]; then
+      echo "registering @phatblat/evalkit from $dir"
+      (cd "$dir" && bun link)
+    fi
     bun install
+
+# Re-register a local evalkit checkout as the linked @phatblat/evalkit package.
+link DIR=EVALKIT:
+    cd "{{ DIR }}" && bun link
 
 # Type-check the whole project (tsc --noEmit).
 check:
@@ -15,46 +34,46 @@ test:
 
 # Mine git-commit fixtures from a source repo's real history.
 fixtures ID="all" SOURCE="~":
-    bun run evalkit/cli.ts build-fixtures --id {{ID}} --source {{SOURCE}}
+    bun run cli.ts build-fixtures --id {{ID}} --source {{SOURCE}}
 
 # Round-trip verify every built fixture (git am/apply, dirty path set, index/tree state).
 verify-fixtures:
-    bun run evalkit/cli.ts verify-fixtures --id all
+    bun run cli.ts verify-fixtures --id all
 
 # Secret-scan every built fixture's history/*.patch and dirty.patch.
 scan:
-    bun run evalkit/cli.ts scan
+    bun run cli.ts scan
 
 # Project run count, per-provider counts, and dollar cost for a suite.
 estimate SUITE="focus":
-    bun run evalkit/cli.ts estimate --suite {{SUITE}}
+    bun run cli.ts estimate --suite {{SUITE}}
 
 # Two real runs against the cheapest model, for a fast end-to-end sanity check.
 smoke:
-    bun run evalkit/cli.ts eval --suite smoke
+    bun run cli.ts eval --suite smoke
 
 # Run a suite end-to-end: matrix expansion, omp invocations, grading, report.
 eval SUITE="focus" JOBS="":
     #!/usr/bin/env bash
     set -euo pipefail
     if [ -n "{{JOBS}}" ]; then
-      bun run evalkit/cli.ts eval --suite {{SUITE}} --jobs {{JOBS}}
+      bun run cli.ts eval --suite {{SUITE}} --jobs {{JOBS}}
     else
-      bun run evalkit/cli.ts eval --suite {{SUITE}}
+      bun run cli.ts eval --suite {{SUITE}}
     fi
 
 # Re-render results.csv/report.md/report.html/charts/*.svg for a past run.
 report RUN="latest":
-    bun run evalkit/cli.ts report --run {{RUN}}
+    bun run cli.ts report --run {{RUN}}
 
 # Overlay composite score / wall time across multiple past runs (default: all runs/*).
 compare RUNS="" OUT="runs/compare":
     #!/usr/bin/env bash
     set -euo pipefail
     if [ -n "{{RUNS}}" ]; then
-      bun run evalkit/cli.ts compare --runs {{RUNS}} --out {{OUT}}
+      bun run cli.ts compare --runs {{RUNS}} --out {{OUT}}
     else
-      bun run evalkit/cli.ts compare --out {{OUT}}
+      bun run cli.ts compare --out {{OUT}}
     fi
 
 # Publish a run's summary artifacts (no session logs) into examples/<NAME>/.

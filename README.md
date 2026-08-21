@@ -13,16 +13,17 @@ distinct concerns, invokes `omp -p "/git:commit"` against it, then grades
 commit count, file grouping, message convention, the required attribution
 trailer, and tree cleanliness.
 
-> **Note:** `evalkit/` is subject-agnostic but currently lives in this repo
-> next to the `git-commit` subject it evaluates, and may be split into a
-> standalone package later. The only place the framework names a concrete
-> subject is the `TASKS` registry in `evalkit/task.ts`.
+> **Note:** `evalkit` is a standalone framework developed at
+> [`github.com/phatblat/evalkit`](https://github.com/phatblat/evalkit) — not
+> published to npm — and consumed here via `bun link` (see `just deps`). The
+> only place this repo names a concrete subject is the `taskRegistry([...])`
+> call in `cli.ts`.
 
 ## Quickstart
 
 ```sh
 mise install     # bun, just, and omp at the versions pinned in mise.toml
-just deps        # bun install
+just deps        # clone/link @phatblat/evalkit if needed, then bun install
 just fixtures    # mine the git-commit fixtures from a dotfiles checkout
 just verify-fixtures
 just scan        # secret-scan the built fixtures
@@ -35,13 +36,13 @@ just report      # render results.csv / report.md / report.html / charts/*.svg
 To run the full evaluation matrix:
 
 ```sh
-just estimate SUITE=focus   # projected run count + dollar cost before spending anything
-just eval SUITE=focus       # 7 models x 2 thinking levels x 4 fixtures x 3 reps = 168 runs
+just estimate focus   # projected run count + dollar cost before spending anything
+just eval focus       # 7 models x 2 thinking levels x 4 fixtures x 3 reps = 168 runs
 just report                 # renders runs/latest/{report.md,report.html,results.csv,charts/}
 ```
 
-`just eval` also takes `JOBS=N` to cap how many providers run concurrently.
-To debug a single cell, `bun run evalkit/cli.ts eval --suite smoke --keep-repos`
+`just eval` also takes an optional 2nd positional `JOBS` argument (`just eval focus 2`).
+To debug a single cell, `bun run cli.ts eval --suite smoke --keep-repos`
 leaves each scratch repo on disk instead of deleting it.
 
 ## Suites
@@ -88,7 +89,7 @@ Each fixture directory holds:
   provenance (repo/base/commit SHAs), and the expected `[[group]]` table
   (type, subject, paths) used for grading.
 
-Every fixture is regenerated with `just fixtures SOURCE=<dotfiles-checkout>`,
+Every fixture is regenerated with `just fixtures all <dotfiles-checkout>`,
 round-trip verified with
 `just verify-fixtures` (asserts `git am`/`git apply` succeed, the dirty path
 set matches the manifest exactly, the index is clean, and the tree is
@@ -145,15 +146,7 @@ timings are measured with providers serialized (`wallS` includes ~1-2s of
 ## Repo layout
 
 ```
-evalkit/            subject-agnostic framework
-  cli.ts            command dispatch
-  suite.ts          suite TOML load + one-pass validation
-  runner.ts         matrix expansion, per-provider scheduling, result rows
-  models.ts         model catalog + pricing, via `omp models --json`
-  gitrepo.ts        git helpers, scratch-repo materialization
-  omp.ts            agent invocation, token and cost accounting
-  secrets.ts        secret-pattern scanner for fixture patches
-  report/           SVG charts, aggregation, md/html/csv rendering
+cli.ts              entry point: binds gitCommitTask + fixture commands to runCli()
 tasks/git-commit/   the subject under test: prompt, grading, fixture mining
 suites/             matrix definitions
 test/               bun tests — no tokens, no network
@@ -163,15 +156,15 @@ examples/           published run summaries (`just publish-example`)
 
 ## Adding a new subject under test
 
-1. Implement the `EvalTask` interface (`evalkit/task.ts`) in a new
+1. Implement the `EvalTask` interface (from `@phatblat/evalkit`) in a new
    `tasks/<name>/task.ts`: `fixtures()`, `prepare()`, `prompt()`, `grade()`,
    `composite()`.
-2. Register it in `evalkit/task.ts`'s `TASKS` map.
+2. Add the task to the `taskRegistry([...])` array in `cli.ts`.
 3. Add fixtures under `tasks/<name>/fixtures/<id>/`.
 4. Point a suite (`suites/*.toml`) at `task = "<name>"`.
 
-No other framework code changes — `evalkit/` (runner, scheduler, model
-catalog, reporting) is fully subject-agnostic.
+No other framework code changes — `@phatblat/evalkit` (runner, scheduler,
+model catalog, reporting) is fully subject-agnostic.
 
 ## 📄 License
 
