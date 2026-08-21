@@ -14,16 +14,16 @@ commit count, file grouping, message convention, the required attribution
 trailer, and tree cleanliness.
 
 > **Note:** `evalkit` is a standalone framework developed at
-> [`github.com/phatblat/evalkit`](https://github.com/phatblat/evalkit)
-> (`@phatblat/evalkit` on npm) and consumed here via `bun link`. The only
-> place this repo names a concrete subject is the `taskRegistry([...])` call
-> in `cli.ts`.
+> [`github.com/phatblat/evalkit`](https://github.com/phatblat/evalkit) — not
+> published to npm — and consumed here via `bun link` (see `just deps`). The
+> only place this repo names a concrete subject is the `taskRegistry([...])`
+> call in `cli.ts`.
 
 ## Quickstart
 
 ```sh
 mise install     # bun, just, and omp at the versions pinned in mise.toml
-just deps        # bun install
+just deps        # clone/link @phatblat/evalkit if needed, then bun install
 just fixtures    # mine the git-commit fixtures from a dotfiles checkout
 just verify-fixtures
 just scan        # secret-scan the built fixtures
@@ -36,12 +36,12 @@ just report      # render results.csv / report.md / report.html / charts/*.svg
 To run the full evaluation matrix:
 
 ```sh
-just estimate SUITE=focus   # projected run count + dollar cost before spending anything
-just eval SUITE=focus       # 7 models x 2 thinking levels x 4 fixtures x 3 reps = 168 runs
+just estimate focus   # projected run count + dollar cost before spending anything
+just eval focus       # 7 models x 2 thinking levels x 4 fixtures x 3 reps = 168 runs
 just report                 # renders runs/latest/{report.md,report.html,results.csv,charts/}
 ```
 
-`just eval` also takes `JOBS=N` to cap how many providers run concurrently.
+`just eval` also takes an optional 2nd positional `JOBS` argument (`just eval focus 2`).
 To debug a single cell, `bun run cli.ts eval --suite smoke --keep-repos`
 leaves each scratch repo on disk instead of deleting it.
 
@@ -89,7 +89,7 @@ Each fixture directory holds:
   provenance (repo/base/commit SHAs), and the expected `[[group]]` table
   (type, subject, paths) used for grading.
 
-Every fixture is regenerated with `just fixtures SOURCE=<dotfiles-checkout>`,
+Every fixture is regenerated with `just fixtures all <dotfiles-checkout>`,
 round-trip verified with
 `just verify-fixtures` (asserts `git am`/`git apply` succeed, the dirty path
 set matches the manifest exactly, the index is clean, and the tree is

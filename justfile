@@ -22,7 +22,7 @@ deps DIR=EVALKIT:
 
 # Re-register a local evalkit checkout as the linked @phatblat/evalkit package.
 link DIR=EVALKIT:
-    cd {{ DIR }} && bun link
+    cd "{{ DIR }}" && bun link
 
 # Type-check the whole project (tsc --noEmit).
 check:

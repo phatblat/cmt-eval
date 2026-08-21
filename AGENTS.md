@@ -90,7 +90,7 @@ dependency itself.
 
 `just deps` clones `@phatblat/evalkit` to `$HOME/dev/evals/evalkit` and registers it
 with `bun link` on demand (both steps are skipped once already in place), then runs
-`bun install`. `just link DIR=<path>` re-points the global `@phatblat/evalkit` link at a
+`bun install`. `just link <path>` re-points the global `@phatblat/evalkit` link at a
 different local checkout without a full `deps` run.
 
 Just recipe parameters are **positional**, not `NAME=value`: `just estimate focus`, not
@@ -202,9 +202,11 @@ typeMatch = 0.05
 - **Bun is mandatory** (`1.3.14`, pinned in `mise.toml`); Node cannot run this. The code
   depends on `Bun.spawn`/`spawnSync`, `Bun.Glob`, `Bun.file`/`Bun.write`, and Bun's ESM
   TOML loader. `tsconfig.json` sets `types: ["bun"]` and `moduleResolution: "bundler"`.
-- **Zero runtime dependencies.** `bun.lock` contains only `@types/bun` and `typescript`
-  (plus transitives). Keep it that way — adding a dependency is a design decision, not a
-  convenience. Charts, TOML parsing, and CSV are all hand-rolled for this reason.
+- **No third-party runtime dependencies beyond the linked framework.** `dependencies`
+  holds only `@phatblat/evalkit` (via `bun link`, no published bytes); `bun.lock`
+  otherwise contains just `@types/bun` and `typescript` (plus transitives). Adding a
+  real published dependency is a design decision, not a convenience. Charts, TOML
+  parsing, and CSV are all hand-rolled for this reason.
 - **No build step.** `tsc` runs with `noEmit`; `bun run cli.ts` executes TS directly.
 - **No linter, no formatter, and no CI are configured.** Do not add or assume one; match
   surrounding style by hand. `just check` (`tsc --noEmit`) is the only static gate.
@@ -239,9 +241,10 @@ typeMatch = 0.05
    `git show --name-only`, `git status --porcelain`, and commit bodies. Reading the
    session log to award points defeats the entire experiment.
 2. **Fixtures are mined from real history, never invented.** `just fixtures` replays real
-   commits from a local `phatblat/dotfiles` checkout (read-only, passed as
-   `SOURCE=<path>`) and records SHAs in `fixture.toml`.
-   If a fixture is unsuitable, source a different commit range — do not fabricate diffs.
+   commits from a local `phatblat/dotfiles` checkout (read-only, passed as the 2nd
+   positional argument, e.g. `just fixtures all <path>`) and records SHAs in
+   `fixture.toml`. If a fixture is unsuitable, source a different commit range — do not
+   fabricate diffs.
 3. **Scratch repos must live outside `$HOME`.** `scratchRoot()` (enforced inside
    `@phatblat/evalkit`) throws if `$TMPDIR` resolves inside the home directory, because
    `omp`'s AGENTS.md discovery walks ancestor directories — a scratch repo under
